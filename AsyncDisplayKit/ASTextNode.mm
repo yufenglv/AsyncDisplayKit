@@ -135,6 +135,10 @@ ASDISPLAYNODE_INLINE CGFloat ceilPixelValue(CGFloat f)
     self.accessibilityTraits = UIAccessibilityTraitStaticText;
 
     _constrainedSize = CGSizeMake(-INFINITY, -INFINITY);
+
+    // Placeholders
+    _placeholderColor = [UIColor colorWithWhite:0.95 alpha:1.0];
+    _placeholderInsets = UIEdgeInsetsZero;
   }
 
   return self;
@@ -664,6 +668,22 @@ ASDISPLAYNODE_INLINE CGFloat ceilPixelValue(CGFloat f)
 {
   CGRect frame = [[self _renderer] frameForTextRange:textRange];
   return [self.class _adjustRendererRect:frame forShadowPadding:self.shadowPadding];
+}
+
+#pragma mark - Placeholders
+
+- (UIImage *)placeholderImageForSize:(CGSize)size
+{
+  UIGraphicsBeginImageContext(size);
+  [self.placeholderColor setFill];
+
+  CGRect bounds = (CGRect){CGPointZero, size};
+  CGRect fillBounds = UIEdgeInsetsInsetRect(bounds, self.placeholderInsets);
+  UIRectFill(fillBounds);
+
+  UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+  UIGraphicsEndImageContext();
+  return image;
 }
 
 #pragma mark - Touch Handling

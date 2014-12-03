@@ -87,10 +87,12 @@
   self.contentsScale = ASDisplayNodeScreenScale();
   self.contentMode = UIViewContentModeScaleAspectFill;
   self.opaque = YES;
+  self.placeholderEnabled = YES;
 
   _cropEnabled = YES;
   _cropRect = CGRectMake(0.5, 0.5, 0, 0);
   _cropDisplayBounds = CGRectNull;
+  _placeholderColor = [UIColor colorWithWhite:0.95 alpha:1.0];
 
   return self;
 }
@@ -258,6 +260,16 @@
     _displayCompletionBlock(NO);
     _displayCompletionBlock = nil;
   }
+}
+
+- (UIImage *)placeholderImageForSize:(CGSize)size
+{
+  UIGraphicsBeginImageContext(size);
+  [self.placeholderColor setFill];
+  UIRectFill((CGRect){CGPointZero, size});
+  UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+  UIGraphicsEndImageContext();
+  return image;
 }
 
 #pragma mark -

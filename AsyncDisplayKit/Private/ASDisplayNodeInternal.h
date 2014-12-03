@@ -53,6 +53,12 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)());
   UIView *_view;
   CALayer *_layer;
 
+  UIImage *_placeholderImage;
+  CALayer *_placeholderLayer;
+
+  // keeps track of nodes/subnodes that have not finished display, used with placeholders
+  NSUInteger _pendingDisplays;
+
   _ASPendingState *_pendingViewState;
 
   struct {
@@ -109,6 +115,9 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)());
 - (BOOL)__visibilityNotificationsDisabled;
 - (void)__incrementVisibilityNotificationsDisabled;
 - (void)__decrementVisibilityNotificationsDisabled;
+
+// Used to notify supernodes that subnodes (or any dependent node) finished or cancelled display
+- (void)_decrementPendingDisplays;
 
 // Call willEnterHierarchy if necessary and set inHierarchy = YES if visibility notifications are enabled on all of its parents
 - (void)__enterHierarchy;

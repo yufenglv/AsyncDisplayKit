@@ -270,6 +270,11 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
     TIME_SCOPED(_debugTimeForDidLoad);
     [self didLoad];
   }
+
+  if (self.isPlaceholderEnabled) {
+    _placeholderLayer = [CALayer layer];
+    [_layer addSublayer:_placeholderLayer];
+  }
 }
 
 - (UIView *)view
@@ -365,6 +370,13 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
   ASDisplayNodeAssertTrue(_size.width >= 0.0);
   ASDisplayNodeAssertTrue(_size.height >= 0.0);
+
+  // this is the earliest we can grab the placeholder
+  if (self.isPlaceholderEnabled && [self displaysAsynchronously] && !_placeholderImage) {
+    _placeholderImage = [self placeholderImageForSize:_size];
+    _placeholderLayer.contents = (id)_placeholderImage.CGImage;
+  }
+
   return _size;
 }
 
@@ -477,6 +489,7 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
   ASDN::MutexLocker l(_propertyLock);
   if (CGRectEqualToRect(_layer.bounds, CGRectZero))
     return;     // Performing layout on a zero-bounds view often results in frame calculations with negative sizes after applying margins, which will cause measure: on subnodes to assert.
+  _placeholderLayer.frame = _layer.bounds;
   [self layout];
   [self layoutDidFinish];
 }
@@ -630,10 +643,13 @@ static inline CATransform3D _calculateTransformFromReferenceToTarget(ASDisplayNo
 
 - (void)willDisplayAsyncLayer:(_ASDisplayLayer *)layer
 {
+  ASDisplayNodeAssertMainThread();
 }
 
 - (void)didDisplayAsyncLayer:(_ASDisplayLayer *)layer
 {
+  [self _decrementPendingDisplays];
+
   // Subclass hook.
   [self displayDidFinish];
 }
@@ -1024,6 +1040,8 @@ static NSInteger incrementIfFound(NSInteger i) {
   if (!self.inHierarchy && !_flags.visibilityNotificationsDisabled && ![self __hasParentWithVisibilityNotificationsDisabled]) {
     self.inHierarchy = YES;
     _flags.isEnteringHierarchy = YES;
+    [self _setupPendingDisplays];
+
     if (self.shouldRasterizeDescendants) {
       // Nodes that are descendants of a rasterized container do not have views or layers, and so cannot receive visibility notifications directly via orderIn/orderOut CALayer actions.  Manually send visibility notifications to rasterized descendants.
       [self _recursiveWillEnterHierarchy];
@@ -1116,6 +1134,45 @@ static NSInteger incrementIfFound(NSInteger i) {
   _supernode = supernode;
 }
 
+- (void)_setupPendingDisplays
+{
+  ASDN::MutexLocker l(_propertyLock);
+
+  for (ASDisplayNode *node in _subnodes) {
+    if ([node _implementsDrawing]) {
+      _pendingDisplays++;
+    }
+  }
+
+  if ([self _implementsDrawing]) {
+    _pendingDisplays++;
+  }
+}
+
+- (void)_decrementPendingDisplays
+{
+  ASDN::MutexLocker l(_propertyLock);
+  ASDisplayNodeAssert(_pendingDisplays > 0, @"all subnodes have messaged that they've displayed. something is overcalling");
+  _pendingDisplays--;
+
+  if (_pendingDisplays == 0 && _placeholderEnabled && _placeholderLayer.superlayer) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [_placeholderLayer removeFromSuperlayer];
+    });
+  }
+}
+
+- (BOOL)_pendingDisplaysHaveFinished
+{
+  ASDN::MutexLocker l(_propertyLock);
+  return _pendingDisplays == 0;
+}
+
+- (BOOL)_implementsDrawing
+{
+  return _flags.implementsDrawRect == YES || _flags.implementsImageDisplay == YES;
+}
+
 #pragma mark - For Subclasses
 
 - (CGSize)calculateSizeThatFits:(CGSize)constrainedSize
@@ -1134,6 +1191,11 @@ static NSInteger incrementIfFound(NSInteger i) {
 {
   ASDisplayNodeAssertThreadAffinity(self);
   return _constrainedSize;
+}
+
+- (UIImage *)placeholderImageForSize:(CGSize)size
+{
+  return nil;
 }
 
 - (void)invalidateCalculatedSize
@@ -1167,6 +1229,8 @@ static NSInteger incrementIfFound(NSInteger i) {
 - (void)reclaimMemory
 {
   self.layer.contents = nil;
+  _placeholderImage = nil;
+  _placeholderLayer.contents = nil;
 }
 
 - (void)recursivelyReclaimMemory
@@ -1184,6 +1248,11 @@ static NSInteger incrementIfFound(NSInteger i) {
 
 - (void)displayDidFinish
 {
+  [_supernode _decrementPendingDisplays];
+
+  if (_placeholderLayer && [self _pendingDisplaysHaveFinished]) {
+    [_placeholderLayer removeFromSuperlayer];
+  }
 }
 
 - (void)setNeedsDisplayAtScale:(CGFloat)contentsScale
@@ -1415,6 +1484,10 @@ static void _recursivelySetDisplaySuspended(ASDisplayNode *node, CALayer *layer,
   _flags.displaySuspended = flag;
 
   self.asyncLayer.displaySuspended = flag;
+
+  if (flag && [self _implementsDrawing]) {
+    [_supernode _decrementPendingDisplays];
+  }
 }
 
 - (BOOL)isInHierarchy

@@ -69,6 +69,18 @@ typedef NS_ENUM(NSUInteger, ASTextNodeHighlightStyle) {
  */
 @property (nonatomic, readonly, assign) NSUInteger lineCount;
 
+#pragma mark - Placeholders
+
+/**
+ @abstract The placeholder color.
+ */
+@property (nonatomic, strong) UIColor *placeholderColor;
+
+/**
+ @abstract Inset the placeholder inside the bounds of the text node.
+ */
+@property (nonatomic, assign) UIEdgeInsets placeholderInsets;
+
 #pragma mark - Shadow
 
 /**

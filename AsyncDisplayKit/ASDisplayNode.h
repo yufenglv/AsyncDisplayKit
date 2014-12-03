@@ -348,6 +348,29 @@
 
 - (void)recursivelyReclaimMemory;
 
+/**
+ * @abstract Optionally provide an image to serve as the placeholder for the backing store while the contents are being
+ * displayed.
+ *
+ * @param size The CGSize that the placeholder should cover.
+ *
+ * @discussion
+ * Subclasses may override this method and return an image to use as the placeholder. Take caution as there may be a 
+ * time and place where this method is called on a background thread. Note that -[UIImage imageNamed:] is not thread
+ * safe when using image assets.
+ *
+ * Defaults to nil.
+ */
+- (UIImage *)placeholderImageForSize:(CGSize)size;
+
+/**
+ * @abstract Toggle displaying a placeholder over the node that covers content until the node and all subnodes are 
+ * displayed.
+ *
+ * @discussion Defaults to NO.
+ */
+@property (nonatomic, assign, getter=isPlaceholderEnabled) BOOL placeholderEnabled;
+
 
 /** @name Hit Testing */
 
