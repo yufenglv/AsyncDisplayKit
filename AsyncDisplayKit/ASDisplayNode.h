@@ -12,6 +12,8 @@
 #import "ASBaseDefines.h"
 #import "ASDealloc2MainObject.h"
 
+typedef UIView *(^ASDisplayNodeViewBlock)();
+typedef CALayer *(^ASDisplayNodeLayerBlock)();
 
 /**
  * An `ASDisplayNode` is an abstraction over `UIView` and `CALayer` that allows you to perform calculations about a view
@@ -43,31 +45,22 @@
  */
 - (id)init;
 
-/** 
- * @abstract Alternative initializer with a view class.
- *
- * @param viewClass Any UIView subclass, such as UIScrollView.
- *
- * @return An ASDisplayNode instance whose view will be of class viewClass.
- *
- * @discussion If viewClass is not a subclass of _ASDisplayView, it will still render synchronously and -layout and 
- * touch handling methods on the node will not be called.
- * The view instance will be created with alloc/init.
- */
-- (id)initWithViewClass:(Class)viewClass;
 
-/** 
- * @abstract Alternative initializer with a layer class.
+/**
+ * @abstract Alternative initializer with a block to create the backing view.
  *
- * @param layerClass Any CALayer subclass, such as CATransformLayer.
- *
- * @return An ASDisplayNode instance whose layer will be of class layerClass.
- *
- * @discussion If layerClass is not a subclass of _ASDisplayLayer, it will still render synchronously and -layout on the
- * node will not be called.
- * The layer instance will be created with alloc/init.
+ * @return An ASDisplayNode instance that loads its view with the given block that is guaranteed to run on the main
+ * queue. The view will render synchronously and -layout and touch handling methods on the node will not be called.
  */
-- (id)initWithLayerClass:(Class)layerClass;
+- (id)initWithViewBlock:(ASDisplayNodeViewBlock)viewBlock;
+
+/**
+ * @abstract Alternative initializer with a block to create the backing layer.
+ *
+ * @return An ASDisplayNode instance that loads its layer with the given block that is guaranteed to run on the main
+ * queue. The layer will render synchronously and -layout and touch handling methods on the node will not be called.
+ */
+- (id)initWithLayerBlock:(ASDisplayNodeLayerBlock)viewBlock;
 
 
 /** @name Properties */
@@ -245,8 +238,8 @@
 /** 
  * @abstract Whether this node's view performs asynchronous rendering.
  *
- * @return Defaults to YES, except for synchronous views (ie, those created with -initWithViewClass: /
- * -initWithLayerClass:), which are always NO.
+ * @return Defaults to YES, except for synchronous views (ie, those created with -initWithViewBlock: /
+ * -initWithLayerBlock:), which are always NO.
  *
  * @discussion If this flag is set, then the node will participate in the current asyncdisplaykit_async_transaction and 
  * do its rendering on the displayQueue instead of the main thread.

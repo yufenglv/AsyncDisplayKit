@@ -57,7 +57,7 @@ CGFloat ASDisplayNodeScreenScale()
   return screenScale;
 }
 
-void ASDispatchOnceOnMainThread(dispatch_once_t *predicate, dispatch_block_t block)
+static void ASDispatchOnceOnMainThread(dispatch_once_t *predicate, dispatch_block_t block)
 {
   if ([NSThread isMainThread]) {
     dispatch_once(predicate, block);
@@ -181,6 +181,35 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
   return self;
 }
 
+- (id)initWithViewBlock:(ASDisplayNodeViewBlock)viewBlock
+{
+  if (!(self = [super init]))
+    return nil;
+
+  ASDisplayNodeAssertNotNil(viewBlock, @"should initialize with a valid block that returns a UIView");
+
+  [self _initializeInstance];
+  _viewBlock = viewBlock;
+  _flags.synchronous = YES;
+
+  return self;
+}
+
+- (id)initWithLayerBlock:(ASDisplayNodeLayerBlock)layerBlock
+{
+  if (!(self = [super init]))
+    return nil;
+
+  ASDisplayNodeAssertNotNil(layerBlock, @"should initialize with a valid block that returns a CALayer");
+
+  [self _initializeInstance];
+  _layerBlock = layerBlock;
+  _flags.synchronous = YES;
+  _flags.layerBacked = YES;
+
+  return self;
+}
+
 - (void)dealloc
 {
   ASDisplayNodeAssertMainThread();
@@ -210,13 +239,6 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
   _displaySentinel = nil;
 
   _pendingDisplayNodes = nil;
-}
-
-#pragma mark - UIResponder overrides
-
-- (UIResponder *)nextResponder
-{
-  return self.view.superview;
 }
 
 #pragma mark - Core
@@ -249,6 +271,48 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
 }
 
+- (UIView *)_viewToLoad
+{
+  UIView *view;
+  ASDN::MutexLocker l(_propertyLock);
+
+  if (_viewBlock) {
+    view = _viewBlock();
+    ASDisplayNodeAssertNotNil(view, @"View block returned nil");
+    ASDisplayNodeAssert(![view isKindOfClass:[_ASDisplayView class]], @"View block should return a synchronously displayed view");
+    _viewBlock = nil;
+    _viewClass = [view class];
+  } else {
+    if (!_viewClass) {
+      _viewClass = [self.class viewClass];
+    }
+    view = [[_viewClass alloc] init];
+  }
+
+  return view;
+}
+
+- (CALayer *)_layerToLoad
+{
+  CALayer *layer;
+  ASDN::MutexLocker l(_propertyLock);
+
+  if (_layerBlock) {
+    layer = _layerBlock();
+    ASDisplayNodeAssertNotNil(layer, @"Layer block returned nil");
+    ASDisplayNodeAssert(![layer isKindOfClass:[_ASDisplayLayer class]], @"Layer block should return a synchronously displayed layer");
+    _layerBlock = nil;
+    _layerClass = [layer class];
+  } else {
+    if (!_layerClass) {
+      _layerClass = [self.class layerClass];
+    }
+    layer = [[_layerClass alloc] init];
+  }
+
+  return layer;
+}
+
 - (void)_loadViewOrLayerIsLayerBacked:(BOOL)isLayerBacked
 {
   ASDN::MutexLocker l(_propertyLock);
@@ -263,18 +327,11 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
   if (isLayerBacked) {
     TIME_SCOPED(_debugTimeToCreateView);
-    if (!_layerClass) {
-      _layerClass = [self.class layerClass];
-    }
-
-    _layer = [[_layerClass alloc] init];
+    _layer = [self _layerToLoad];
     _layer.delegate = self;
   } else {
     TIME_SCOPED(_debugTimeToCreateView);
-    if (!_viewClass) {
-      _viewClass = [self.class viewClass];
-    }
-    _view = [[_viewClass alloc] init];
+    _view = [self _viewToLoad];
     _view.asyncdisplaykit_node = self;
     _layer = _view.layer;
   }
@@ -363,6 +420,9 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
   ASDN::MutexLocker l(_propertyLock);
   ASDisplayNodeAssert(!_view && !_layer, @"Cannot change isLayerBacked after layer or view has loaded");
+  ASDisplayNodeAssert(!_viewBlock && !_layerBlock, @"Cannot change isLayerBacked when a layer or view block is provided");
+  ASDisplayNodeAssert(!_viewClass && !_layerClass, @"Cannot change isLayerBacked when a layer or view class is provided");
+
   if (isLayerBacked != _flags.layerBacked && !_view && !_layer) {
     _flags.layerBacked = isLayerBacked;
   }
@@ -378,8 +438,13 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
 - (CGSize)measure:(CGSize)constrainedSize
 {
-  ASDisplayNodeAssertThreadAffinity(self);
   ASDN::MutexLocker l(_propertyLock);
+  return [self __measure:constrainedSize];
+}
+
+- (CGSize)__measure:(CGSize)constrainedSize
+{
+  ASDisplayNodeAssertThreadAffinity(self);
 
   if (![self __shouldSize])
     return CGSizeZero;
@@ -399,7 +464,7 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
   // we generate placeholders at measure: time so that a node is guaranteed to have a placeholder ready to go
   // also if a node has no size, it should not have a placeholder
-  if (self.placeholderEnabled && [self displaysAsynchronously] && _size.width > 0.0 && _size.height > 0.0) {
+  if (self.placeholderEnabled && [self _displaysAsynchronously] && _size.width > 0.0 && _size.height > 0.0) {
     if (!_placeholderImage) {
       _placeholderImage = [self placeholderImage];
     }
@@ -414,8 +479,17 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
 
 - (BOOL)displaysAsynchronously
 {
-  ASDisplayNodeAssertThreadAffinity(self);
   ASDN::MutexLocker l(_propertyLock);
+  return [self _displaysAsynchronously];
+}
+
+/**
+ * Core implementation of -displaysAsynchronously. 
+ * Must be called with _propertyLock held.
+ */
+- (BOOL)_displaysAsynchronously
+{
+  ASDisplayNodeAssertThreadAffinity(self);
   if (self.isSynchronous) {
     return NO;
   } else {
@@ -1282,7 +1356,7 @@ static NSInteger incrementIfFound(NSInteger i) {
 
   [_supernode subnodeDisplayWillStart:self];
 
-  if (_placeholderImage && _placeholderLayer) {
+  if (_placeholderImage && _placeholderLayer && self.layer.contents == nil) {
     _placeholderLayer.contents = (id)_placeholderImage.CGImage;
     [self.layer addSublayer:_placeholderLayer];
   }
@@ -1616,6 +1690,10 @@ static void _recursivelySetDisplaySuspended(ASDisplayNode *node, CALayer *layer,
     notableTargetDesc = [NSString stringWithFormat:@" [%@]", _viewClass];
   } else if (_layerClass) { // Nonstandard layer class unloaded
     notableTargetDesc = [NSString stringWithFormat:@" [%@]", _layerClass];
+  } else if (_viewBlock) { // Nonstandard lazy view unloaded
+    notableTargetDesc = @" [block]";
+  } else if (_layerBlock) { // Nonstandard lazy layer unloaded
+    notableTargetDesc = @" [block]";
   }
   if (self.name) {
     return [NSString stringWithFormat:@"<%@ %p name = %@%@>", self.class, self, self.name, notableTargetDesc];

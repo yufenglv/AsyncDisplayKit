@@ -56,6 +56,8 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides) {
   UIEdgeInsets _hitTestSlop;
   NSMutableArray *_subnodes;
 
+  ASDisplayNodeViewBlock _viewBlock;
+  ASDisplayNodeLayerBlock _layerBlock;
   Class _viewClass;
   Class _layerClass;
   UIView *_view;
@@ -118,6 +120,9 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides) {
 - (BOOL)__shouldSize;
 - (void)__exitedHierarchy;
 
+// Core implementation of -measure:. Must be called with _propertyLock held.
+- (CGSize)__measure:(CGSize)constrainedSize;
+
 - (void)__layout;
 - (void)__setSupernode:(ASDisplayNode *)supernode;
 
@@ -139,6 +144,12 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides) {
 
 // Returns the ancestor node that rasterizes descendants, or nil if none.
 - (ASDisplayNode *)__rasterizedContainerNode;
+
+// Alternative initialiser for backing with a custom view class.  Supports asynchronous display with _ASDisplayView subclasses.
+- (id)initWithViewClass:(Class)viewClass;
+
+// Alternative initialiser for backing with a custom layer class.  Supports asynchronous display with _ASDisplayLayer subclasses.
+- (id)initWithLayerClass:(Class)layerClass;
 
 @property (nonatomic, assign) CGFloat contentsScaleForDisplay;
 

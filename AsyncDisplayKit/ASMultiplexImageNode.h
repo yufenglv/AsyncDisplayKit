@@ -46,8 +46,7 @@ typedef NS_ENUM(NSUInteger, ASMultiplexImageNodeErrorCode) {
  * @discussion If `cache` is nil, the receiver will not attempt to retrieve images from a cache before downloading them.
  * @returns An initialized ASMultiplexImageNode.
  */
-- (instancetype)initWithCache:(id<ASImageCacheProtocol>)cache downloader:(id<ASImageDownloaderProtocol>)downloader;
-- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithCache:(id<ASImageCacheProtocol>)cache downloader:(id<ASImageDownloaderProtocol>)downloader NS_DESIGNATED_INITIALIZER;
 
 /**
  * @abstract The delegate, which must conform to the <ASMultiplexImageNodeDelegate> protocol.
@@ -68,6 +67,11 @@ typedef NS_ENUM(NSUInteger, ASMultiplexImageNodeErrorCode) {
  * lesser-quality images.  Set `downloadsIntermediateImages` to YES to enable this behaviour.
  */
 @property (nonatomic, readwrite, assign) BOOL downloadsIntermediateImages;
+
+/**
+ * @abstract Indicates that the receiver should stop loading if it encounters an error while loading an intermediate image identifier. Defaults to NO.
+ */
+@property (nonatomic, readwrite, assign) BOOL haltsLoadingOnError;
 
 /**
  * @abstract An array of identifiers representing various versions of an image for ASMultiplexImageNode to display.
