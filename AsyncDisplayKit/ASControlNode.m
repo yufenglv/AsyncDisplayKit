@@ -197,11 +197,7 @@ void _ASEnumerateControlEventsIncludedInMaskWithBlock(ASControlNodeEvent mask, v
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
 {
-  // If we're interested in touches, this is a tap (the only gesture we care about) and passed -hitTest for us, then no, you may not begin. Sir.
-  if ([self _isInterestedInTouches] && [gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]])
-    return NO;
-
-  // Otherwise, go ahead. :]
+  // similar to UIControl, gestures always win
   return YES;
 }
 
@@ -226,7 +222,7 @@ void _ASEnumerateControlEventsIncludedInMaskWithBlock(ASControlNodeEvent mask, v
       if (!eventDispatchTable)
       {
         // Create the dispatch table for this event.
-        eventDispatchTable = [NSMapTable weakToStrongObjectsMapTable];
+        eventDispatchTable = [NSMapTable strongToStrongObjectsMapTable];
         [_controlEventDispatchTable setObject:eventDispatchTable forKey:eventKey];
       }
 
@@ -365,9 +361,10 @@ void _ASEnumerateControlEventsIncludedInMaskWithBlock(ASControlNodeEvent mask, v
 }
 
 #pragma mark - Convenience
+
 - (BOOL)_isInterestedInTouches
 {
-  // We're only interested in touches if we're enabled and we've got targets to talk to.
+  // We're only interested in touches if we're enabled
   return self.enabled;
 }
 

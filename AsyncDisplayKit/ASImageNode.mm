@@ -87,7 +87,7 @@
   // TODO can this be removed?
   self.contentsScale = ASDisplayNodeScreenScale();
   self.contentMode = UIViewContentModeScaleAspectFill;
-  self.opaque = YES;
+  self.opaque = NO;
 
   _cropEnabled = YES;
   _cropRect = CGRectMake(0.5, 0.5, 0, 0);
@@ -184,12 +184,6 @@
   CGSize imageSizeInPixels = CGSizeMake(imageSize.width * image.scale, imageSize.height * image.scale);
   CGSize boundsSizeInPixels = CGSizeMake(floorf(bounds.size.width * contentsScale), floorf(bounds.size.height * contentsScale));
 
-  CGImageAlphaInfo alphaInfo = CGImageGetAlphaInfo(image.CGImage);
-  BOOL imageHasAlpha =    alphaInfo == kCGImageAlphaFirst
-                       || alphaInfo == kCGImageAlphaLast
-                       || alphaInfo == kCGImageAlphaPremultipliedFirst
-                       || alphaInfo == kCGImageAlphaPremultipliedLast;
-
   BOOL contentModeSupported =    contentMode == UIViewContentModeScaleAspectFill
                               || contentMode == UIViewContentModeScaleAspectFit
                               || contentMode == UIViewContentModeCenter;
@@ -226,7 +220,7 @@
 
   // Use contentsScale of 1.0 and do the contentsScale handling in boundsSizeInPixels so ASCroppedImageBackingSizeAndDrawRectInBounds
   // will do its rounding on pixel instead of point boundaries
-  UIGraphicsBeginImageContextWithOptions(backingSize, !imageHasAlpha, 1.0);
+  UIGraphicsBeginImageContextWithOptions(backingSize, parameters.opaque, 1.0);
 
   CGContextRef context = UIGraphicsGetCurrentContext();
 
@@ -373,3 +367,20 @@ extern asimagenode_modification_block_t ASImageNodeRoundBorderModificationBlock(
     return modifiedImage;
   };
 }
+
+extern asimagenode_modification_block_t ASImageNodeTintColorModificationBlock(UIColor *color)
+{
+  return ^(UIImage *originalImage) {
+    UIGraphicsBeginImageContextWithOptions(originalImage.size, NO, originalImage.scale);
+    
+    // Set color and render template
+    [color setFill];
+    UIImage *templateImage = [originalImage imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    [templateImage drawAtPoint:CGPointZero];
+    
+    UIImage *modifiedImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return modifiedImage;
+  };
+}
+
