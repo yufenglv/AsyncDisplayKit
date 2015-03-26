@@ -212,12 +212,12 @@ ASDISPLAYNODE_INLINE CGFloat ceilPixelValue(CGFloat f)
   [self _invalidateRenderer];
 }
 
-- (void)reclaimMemory
+- (void)clearRendering
 {
   // We discard the backing store and renderer to prevent the very large
   // memory overhead of maintaining these for all text nodes.  They can be
   // regenerated when layout is necessary.
-  [super reclaimMemory];      // ASDisplayNode will set layer.contents = nil
+  [super clearRendering];      // ASDisplayNode will set layer.contents = nil
   [self _invalidateRenderer];
 }
 
@@ -231,6 +231,30 @@ ASDISPLAYNODE_INLINE CGFloat ceilPixelValue(CGFloat f)
     _longPressGestureRecognizer.cancelsTouchesInView = NO;
     _longPressGestureRecognizer.delegate = self;
     [self.view addGestureRecognizer:_longPressGestureRecognizer];
+  }
+}
+
+- (void)setFrame:(CGRect)frame
+{
+  [super setFrame:frame];
+  if (!CGSizeEqualToSize(frame.size, _constrainedSize)) {
+    // Our bounds have changed to a size that is not identical to our constraining size,
+    // so our previous layout information is invalid, and TextKit may draw at the
+    // incorrect origin.
+    _constrainedSize = CGSizeMake(-INFINITY, -INFINITY);
+    [self _invalidateRenderer];
+  }
+}
+
+- (void)setBounds:(CGRect)bounds
+{
+  [super setBounds:bounds];
+  if (!CGSizeEqualToSize(bounds.size, _constrainedSize)) {
+    // Our bounds have changed to a size that is not identical to our constraining size,
+    // so our previous layout information is invalid, and TextKit may draw at the
+    // incorrect origin.
+    _constrainedSize = CGSizeMake(-INFINITY, -INFINITY);
+    [self _invalidateRenderer];
   }
 }
 
@@ -699,7 +723,7 @@ ASDISPLAYNODE_INLINE CGFloat ceilPixelValue(CGFloat f)
   // fill each line with the placeholder color
   for (NSValue *rectValue in lineRects) {
     CGRect lineRect = [rectValue CGRectValue];
-    CGRect fillBounds = UIEdgeInsetsInsetRect(lineRect, self.placeholderInsets);
+    CGRect fillBounds = CGRectIntegral(UIEdgeInsetsInsetRect(lineRect, self.placeholderInsets));
 
     if (fillBounds.size.width > 0.0 && fillBounds.size.height > 0.0) {
       UIRectFill(fillBounds);

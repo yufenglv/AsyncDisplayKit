@@ -90,7 +90,8 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
   // Subclasses should never override these
   ASDisplayNodeAssert(!ASDisplayNodeSubclassOverridesSelector(self, @selector(calculatedSize)), @"Subclass %@ must not override calculatedSize method", NSStringFromClass(self));
   ASDisplayNodeAssert(!ASDisplayNodeSubclassOverridesSelector(self, @selector(measure:)), @"Subclass %@ must not override measure method", NSStringFromClass(self));
-  ASDisplayNodeAssert(!ASDisplayNodeSubclassOverridesSelector(self, @selector(recursivelyReclaimMemory)), @"Subclass %@ must not override recursivelyReclaimMemory method", NSStringFromClass(self));
+  ASDisplayNodeAssert(!ASDisplayNodeSubclassOverridesSelector(self, @selector(recursivelyClearRendering)), @"Subclass %@ must not override recursivelyClearRendering method", NSStringFromClass(self));
+  ASDisplayNodeAssert(!ASDisplayNodeSubclassOverridesSelector(self, @selector(recursivelyClearRemoteData)), @"Subclass %@ must not override recursivelyClearRemoteData method", NSStringFromClass(self));
 }
 
 + (BOOL)layerBackedNodesEnabled
@@ -123,8 +124,6 @@ void ASDisplayNodePerformBlockOnMainThread(void (^block)())
   _flags.implementsDrawRect = ([[self class] respondsToSelector:@selector(drawRect:withParameters:isCancelled:isRasterizing:)] ? 1 : 0);
   _flags.implementsImageDisplay = ([[self class] respondsToSelector:@selector(displayWithParameters:isCancelled:)] ? 1 : 0);
   _flags.implementsDrawParameters = ([self respondsToSelector:@selector(drawParametersForAsyncLayer:)] ? 1 : 0);
-
-  _fadeAnimationDuration = 0.1;
 
   ASDisplayNodeMethodOverrides overrides = ASDisplayNodeMethodOverrideNone;
   if (ASDisplayNodeSubclassOverridesSelector([self class], @selector(touchesBegan:withEvent:))) {
@@ -1235,10 +1234,10 @@ static NSInteger incrementIfFound(NSInteger i) {
         [self _tearDownPlaceholderLayer];
       };
 
-      if (self.placeholderFadesOut) {
+      if (_placeholderFadeDuration > 0.0) {
         [CATransaction begin];
         [CATransaction setCompletionBlock:cleanupBlock];
-        [CATransaction setAnimationDuration:_fadeAnimationDuration];
+        [CATransaction setAnimationDuration:_placeholderFadeDuration];
         _placeholderLayer.opacity = 0.0;
         [CATransaction commit];
       } else {
@@ -1330,18 +1329,44 @@ static NSInteger incrementIfFound(NSInteger i) {
   [self __exitedHierarchy];
 }
 
-- (void)reclaimMemory
+- (void)clearRendering
 {
   self.layer.contents = nil;
   _placeholderLayer.contents = nil;
 }
 
-- (void)recursivelyReclaimMemory
+- (void)recursivelyClearRendering
 {
   for (ASDisplayNode *subnode in self.subnodes) {
-    [subnode recursivelyReclaimMemory];
+    [subnode recursivelyClearRendering];
   }
-  [self reclaimMemory];
+  [self clearRendering];
+}
+
+- (void)fetchRemoteData
+{
+  // subclass override
+}
+
+- (void)recursivelyFetchRemoteData
+{
+  for (ASDisplayNode *subnode in self.subnodes) {
+    [subnode recursivelyFetchRemoteData];
+  }
+  [self fetchRemoteData];
+}
+
+- (void)clearRemoteData
+{
+  // subclass override
+}
+
+- (void)recursivelyClearRemoteData
+{
+  for (ASDisplayNode *subnode in self.subnodes) {
+    [subnode recursivelyClearRemoteData];
+  }
+  [self clearRemoteData];
 }
 
 - (void)layout
@@ -1461,6 +1486,7 @@ static NSInteger incrementIfFound(NSInteger i) {
     return CGRectContainsPoint(UIEdgeInsetsInsetRect(self.bounds, slop), point);
   }
 }
+
 
 #pragma mark - Pending View State
 - (_ASPendingState *)pendingViewState
@@ -1771,6 +1797,31 @@ static const char *ASDisplayNodeAssociatedNodeKey = "ASAssociatedNode";
 - (void)addSubnode:(ASDisplayNode *)node
 {
   [self addSublayer:node.layer];
+}
+
+@end
+
+
+@implementation ASDisplayNode (Deprecated)
+
+- (void)setPlaceholderFadesOut:(BOOL)placeholderFadesOut
+{
+  self.placeholderFadeDuration = placeholderFadesOut ? 0.1 : 0.0;
+}
+
+- (BOOL)placeholderFadesOut
+{
+  return self.placeholderFadeDuration > 0.0;
+}
+
+- (void)reclaimMemory
+{
+  [self clearRendering];
+}
+
+- (void)recursivelyReclaimMemory
+{
+  [self recursivelyClearRendering];
 }
 
 @end

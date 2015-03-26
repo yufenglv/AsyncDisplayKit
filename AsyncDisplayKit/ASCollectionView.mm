@@ -13,6 +13,7 @@
 #import "ASRangeController.h"
 #import "ASDataController.h"
 #import "ASDisplayNodeInternal.h"
+#import "ASBatchFetching.h"
 
 const static NSUInteger kASCollectionViewAnimationNone = 0;
 
@@ -38,7 +39,10 @@ static BOOL _isInterceptedSelector(SEL sel)
           
           // used for ASRangeController visibility updates
           sel == @selector(collectionView:willDisplayCell:forItemAtIndexPath:) ||
-          sel == @selector(collectionView:didEndDisplayingCell:forItemAtIndexPath:)
+          sel == @selector(collectionView:didEndDisplayingCell:forItemAtIndexPath:) ||
+
+          // used for batch fetching API
+          sel == @selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:)
           );
 }
 
@@ -62,7 +66,8 @@ static BOOL _isInterceptedSelector(SEL sel)
   if (!self) {
     return nil;
   }
-  
+
+  ASDisplayNodeAssert(target, @"target must not be nil");
   ASDisplayNodeAssert(interceptor, @"interceptor must not be nil");
   
   _target = target;
@@ -101,7 +106,13 @@ static BOOL _isInterceptedSelector(SEL sel)
 
   BOOL _performingBatchUpdates;
   NSMutableArray *_batchUpdateBlocks;
+
+  BOOL _asyncDataFetchingEnabled;
+
+  ASBatchContext *_batchContext;
 }
+
+@property (atomic, assign) BOOL asyncDataSourceLocked;
 
 @end
 
@@ -111,6 +122,11 @@ static BOOL _isInterceptedSelector(SEL sel)
 #pragma mark Lifecycle.
 
 - (instancetype)initWithFrame:(CGRect)frame collectionViewLayout:(UICollectionViewLayout *)layout
+{
+  return [self initWithFrame:frame collectionViewLayout:layout asyncDataFetching:NO];
+}
+
+- (instancetype)initWithFrame:(CGRect)frame collectionViewLayout:(UICollectionViewLayout *)layout asyncDataFetching:(BOOL)asyncDataFetchingEnabled
 {
   if (!(self = [super initWithFrame:frame collectionViewLayout:layout]))
     return nil;
@@ -124,12 +140,16 @@ static BOOL _isInterceptedSelector(SEL sel)
   _rangeController.delegate = self;
   _rangeController.layoutController = _layoutController;
 
-  _dataController = [[ASDataController alloc] init];
+  _dataController = [[ASDataController alloc] initWithAsyncDataFetching:asyncDataFetchingEnabled];
   _dataController.delegate = _rangeController;
   _dataController.dataSource = self;
 
-  _proxyDelegate = [[_ASCollectionViewProxy alloc] initWithTarget:nil interceptor:self];
-  super.delegate = (id<UICollectionViewDelegate>)_proxyDelegate;
+  _batchContext = [[ASBatchContext alloc] init];
+
+  _leadingScreensForBatching = 1.0;
+
+  _asyncDataFetchingEnabled = asyncDataFetchingEnabled;
+  _asyncDataSourceLocked = NO;
 
   _performingBatchUpdates = NO;
   _batchUpdateBlocks = [NSMutableArray array];
@@ -144,6 +164,7 @@ static BOOL _isInterceptedSelector(SEL sel)
 
 - (void)reloadData
 {
+  ASDisplayNodeAssert(self.asyncDelegate, @"ASCollectionView's asyncDelegate property must be set.");
   ASDisplayNodePerformBlockOnMainThread(^{
     [super reloadData];
   });
@@ -182,19 +203,35 @@ static BOOL _isInterceptedSelector(SEL sel)
   if (_asyncDelegate == asyncDelegate)
     return;
 
-  _asyncDelegate = asyncDelegate;
-  _proxyDelegate = [[_ASCollectionViewProxy alloc] initWithTarget:_asyncDelegate interceptor:self];
-  super.delegate = (id<UICollectionViewDelegate>)_proxyDelegate;
+  if (asyncDelegate == nil) {
+    _asyncDelegate = nil;
+    _proxyDelegate = nil;
+    super.delegate = nil;
+  } else {
+    _asyncDelegate = asyncDelegate;
+    _proxyDelegate = [[_ASCollectionViewProxy alloc] initWithTarget:_asyncDelegate interceptor:self];
+    super.delegate = (id<UICollectionViewDelegate>)_proxyDelegate;
+  }
+}
+
+- (void)setTuningParameters:(ASRangeTuningParameters)tuningParameters forRangeType:(ASLayoutRangeType)rangeType
+{
+  [_layoutController setTuningParameters:tuningParameters forRangeType:rangeType];
+}
+
+- (ASRangeTuningParameters)tuningParametersForRangeType:(ASLayoutRangeType)rangeType
+{
+  return [_layoutController tuningParametersForRangeType:rangeType];
 }
 
 - (ASRangeTuningParameters)rangeTuningParameters
 {
-  return _layoutController.tuningParameters;
+  return [self tuningParametersForRangeType:ASLayoutRangeTypeRender];
 }
 
 - (void)setRangeTuningParameters:(ASRangeTuningParameters)tuningParameters
 {
-  _layoutController.tuningParameters = tuningParameters;
+  [self setTuningParameters:tuningParameters forRangeType:ASLayoutRangeTypeRender];
 }
 
 - (CGSize)calculatedSizeForNodeAtIndexPath:(NSIndexPath *)indexPath
@@ -340,6 +377,46 @@ static BOOL _isInterceptedSelector(SEL sel)
 }
 
 
+#pragma mark -
+#pragma mark Batch Fetching
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+  [self handleBatchFetchScrollingToOffset:*targetContentOffset];
+
+  if ([_asyncDelegate respondsToSelector:@selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:)]) {
+    [_asyncDelegate scrollViewWillEndDragging:scrollView withVelocity:velocity targetContentOffset:targetContentOffset];
+  }
+}
+
+- (BOOL)shouldBatchFetch
+{
+  // if the delegate does not respond to this method, there is no point in starting to fetch
+  BOOL canFetch = [_asyncDelegate respondsToSelector:@selector(collectionView:willBeginBatchFetchWithContext:)];
+  if (canFetch && [_asyncDelegate respondsToSelector:@selector(shouldBatchFetchForCollectionView:)]) {
+    return [_asyncDelegate shouldBatchFetchForCollectionView:self];
+  } else {
+    return canFetch;
+  }
+}
+
+- (void)handleBatchFetchScrollingToOffset:(CGPoint)targetOffset
+{
+  ASDisplayNodeAssert(_batchContext != nil, @"Batch context should exist");
+
+  if (![self shouldBatchFetch]) {
+    return;
+  }
+
+  if (ASDisplayShouldFetchBatchForContext(_batchContext, [self scrollDirection], self.bounds, self.contentSize, targetOffset, _leadingScreensForBatching)) {
+    [_batchContext beginBatchFetching];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      [_asyncDelegate collectionView:self willBeginBatchFetchWithContext:_batchContext];
+    });
+  }
+}
+
+
 #pragma mark - ASDataControllerSource
 
 - (ASCellNode *)dataController:(ASDataController *)dataController nodeAtIndexPath:(NSIndexPath *)indexPath
@@ -372,6 +449,26 @@ static BOOL _isInterceptedSelector(SEL sel)
     return [_asyncDataSource numberOfSectionsInCollectionView:self];
   } else {
     return 1;
+  }
+}
+
+- (void)dataControllerLockDataSource
+{
+  ASDisplayNodeAssert(!self.asyncDataSourceLocked, @"The data source has already been locked");
+
+  self.asyncDataSourceLocked = YES;
+  if ([_asyncDataSource respondsToSelector:@selector(collectionViewLockDataSource:)]) {
+    [_asyncDataSource collectionViewLockDataSource:self];
+  }
+}
+
+- (void)dataControllerUnlockDataSource
+{
+  ASDisplayNodeAssert(self.asyncDataSourceLocked, @"The data source has already been unlocked");
+
+  self.asyncDataSourceLocked = NO;
+  if ([_asyncDataSource respondsToSelector:@selector(collectionViewUnlockDataSource:)]) {
+    [_asyncDataSource collectionViewUnlockDataSource:self];
   }
 }
 

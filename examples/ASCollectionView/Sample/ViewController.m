@@ -34,7 +34,7 @@
   UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
   layout.scrollDirection = UICollectionViewScrollDirectionHorizontal;
   
-  _collectionView = [[ASCollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
+  _collectionView = [[ASCollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout asyncDataFetching:YES];
   _collectionView.asyncDataSource = self;
   _collectionView.asyncDelegate = self;
   _collectionView.backgroundColor = [UIColor whiteColor];
@@ -65,7 +65,7 @@
 
 - (ASCellNode *)collectionView:(ASCollectionView *)collectionView nodeForItemAtIndexPath:(NSIndexPath *)indexPath
 {
-  NSString *text = [NSString stringWithFormat:@"[%ld.%ld] says hi", indexPath.section, indexPath.item];
+  NSString *text = [NSString stringWithFormat:@"[%zd.%zd] says hi", indexPath.section, indexPath.item];
   ASTextCellNode *node = [[ASTextCellNode alloc] init];
   node.text = text;
   node.backgroundColor = [UIColor lightGrayColor];
@@ -76,6 +76,23 @@
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
 {
   return 300;
+}
+
+- (void)collectionViewLockDataSource:(ASCollectionView *)collectionView
+{
+  // lock the data source
+  // The data source should not be change until it is unlocked.
+}
+
+- (void)collectionViewUnlockDataSource:(ASCollectionView *)collectionView
+{
+  // unlock the data source to enable data source updating.
+}
+
+- (void)collectionView:(UICollectionView *)collectionView willBeginBatchFetchWithContext:(ASBatchContext *)context
+{
+  NSLog(@"fetch additional content");
+  [context completeBatchFetching:YES];
 }
 
 @end

@@ -13,8 +13,8 @@
 #import <AsyncDisplayKit/ASFlowLayoutController.h>
 #import <AsyncDisplayKit/ASLayoutController.h>
 
-@protocol ASRangeControllerDelegate;
 
+@protocol ASRangeControllerDelegate;
 
 /**
  * Working range controller.

@@ -14,7 +14,7 @@
 #import "ASLayoutController.h"
 #import "ASRangeController.h"
 #import "ASDisplayNodeInternal.h"
-
+#import "ASBatchFetching.h"
 
 
 #pragma mark -
@@ -38,7 +38,10 @@ static BOOL _isInterceptedSelector(SEL sel)
 
           // used for ASRangeController visibility updates
           sel == @selector(tableView:willDisplayCell:forRowAtIndexPath:) ||
-          sel == @selector(tableView:didEndDisplayingCell:forRowAtIndexPath:)
+          sel == @selector(tableView:didEndDisplayingCell:forRowAtIndexPath:) ||
+
+          // used for batch fetching API
+          sel == @selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:)
           );
 }
 
@@ -63,6 +66,7 @@ static BOOL _isInterceptedSelector(SEL sel)
     return nil;
   }
 
+  ASDisplayNodeAssert(target, @"target must not be nil");
   ASDisplayNodeAssert(interceptor, @"interceptor must not be nil");
 
   _target = target;
@@ -110,7 +114,13 @@ static BOOL _isInterceptedSelector(SEL sel)
   ASFlowLayoutController *_layoutController;
 
   ASRangeController *_rangeController;
+
+  BOOL _asyncDataFetchingEnabled;
+
+  ASBatchContext *_batchContext;
 }
+
+@property (atomic, assign) BOOL asyncDataSourceLocked;
 
 @end
 
@@ -121,6 +131,12 @@ static BOOL _isInterceptedSelector(SEL sel)
 
 - (instancetype)initWithFrame:(CGRect)frame style:(UITableViewStyle)style
 {
+  return [self initWithFrame:frame style:style asyncDataFetching:NO];
+}
+
+- (instancetype)initWithFrame:(CGRect)frame style:(UITableViewStyle)style asyncDataFetching:(BOOL)asyncDataFetchingEnabled
+{
+
   if (!(self = [super initWithFrame:frame style:style]))
     return nil;
 
@@ -130,12 +146,15 @@ static BOOL _isInterceptedSelector(SEL sel)
   _rangeController.layoutController = _layoutController;
   _rangeController.delegate = self;
 
-  _dataController = [[ASDataController alloc] init];
+  _dataController = [[ASDataController alloc] initWithAsyncDataFetching:asyncDataFetchingEnabled];
   _dataController.dataSource = self;
   _dataController.delegate = _rangeController;
 
-  _proxyDelegate = [[_ASTableViewProxy alloc] initWithTarget:nil interceptor:self];
-  super.delegate = (id<UITableViewDelegate>)_proxyDelegate;
+  _asyncDataFetchingEnabled = asyncDataFetchingEnabled;
+  _asyncDataSourceLocked = NO;
+
+  _leadingScreensForBatching = 1.0;
+  _batchContext = [[ASBatchContext alloc] init];
 
   return self;
 }
@@ -175,27 +194,44 @@ static BOOL _isInterceptedSelector(SEL sel)
   if (_asyncDelegate == asyncDelegate)
     return;
 
-  _asyncDelegate = asyncDelegate;
-  _proxyDelegate = [[_ASTableViewProxy alloc] initWithTarget:asyncDelegate interceptor:self];
-  super.delegate = (id<UITableViewDelegate>)_proxyDelegate;
+  if (asyncDelegate == nil) {
+    _asyncDelegate = nil;
+    _proxyDelegate = nil;
+    super.delegate = nil;
+  } else {
+    _asyncDelegate = asyncDelegate;
+    _proxyDelegate = [[_ASTableViewProxy alloc] initWithTarget:asyncDelegate interceptor:self];
+    super.delegate = (id<UITableViewDelegate>)_proxyDelegate;
+  }
 }
 
 - (void)reloadData
 {
+  ASDisplayNodeAssert(self.asyncDelegate, @"ASTableView's asyncDelegate property must be set.");
   ASDisplayNodePerformBlockOnMainThread(^{
     [super reloadData];
   });
   [_dataController reloadDataWithAnimationOption:UITableViewRowAnimationNone];
 }
 
+- (void)setTuningParameters:(ASRangeTuningParameters)tuningParameters forRangeType:(ASLayoutRangeType)rangeType
+{
+  [_layoutController setTuningParameters:tuningParameters forRangeType:rangeType];
+}
+
+- (ASRangeTuningParameters)tuningParametersForRangeType:(ASLayoutRangeType)rangeType
+{
+  return [_layoutController tuningParametersForRangeType:rangeType];
+}
+
 - (ASRangeTuningParameters)rangeTuningParameters
 {
-  return _layoutController.tuningParameters;
+  return [self tuningParametersForRangeType:ASLayoutRangeTypeRender];
 }
 
 - (void)setRangeTuningParameters:(ASRangeTuningParameters)tuningParameters
 {
-  _layoutController.tuningParameters = tuningParameters;
+  [self setTuningParameters:tuningParameters forRangeType:ASLayoutRangeTypeRender];
 }
 
 - (ASCellNode *)nodeForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -347,6 +383,46 @@ static BOOL _isInterceptedSelector(SEL sel)
 }
 
 
+#pragma mark - 
+#pragma mark Batch Fetching
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+  [self handleBatchFetchScrollingToOffset:*targetContentOffset];
+
+  if ([_asyncDelegate respondsToSelector:@selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:)]) {
+    [_asyncDelegate scrollViewWillEndDragging:scrollView withVelocity:velocity targetContentOffset:targetContentOffset];
+  }
+}
+
+- (BOOL)shouldBatchFetch
+{
+  // if the delegate does not respond to this method, there is no point in starting to fetch
+  BOOL canFetch = [_asyncDelegate respondsToSelector:@selector(tableView:willBeginBatchFetchWithContext:)];
+  if (canFetch && [_asyncDelegate respondsToSelector:@selector(shouldBatchFetchForTableView:)]) {
+    return [_asyncDelegate shouldBatchFetchForTableView:self];
+  } else {
+    return canFetch;
+  }
+}
+
+- (void)handleBatchFetchScrollingToOffset:(CGPoint)targetOffset
+{
+  ASDisplayNodeAssert(_batchContext != nil, @"Batch context should exist");
+
+  if (![self shouldBatchFetch]) {
+    return;
+  }
+
+  if (ASDisplayShouldFetchBatchForContext(_batchContext, [self scrollDirection], self.bounds, self.contentSize, targetOffset, _leadingScreensForBatching)) {
+    [_batchContext beginBatchFetching];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      [_asyncDelegate tableView:self willBeginBatchFetchWithContext:_batchContext];
+    });
+  }
+}
+
+
 #pragma mark -
 #pragma mark ASRangeControllerDelegate
 
@@ -423,6 +499,28 @@ static BOOL _isInterceptedSelector(SEL sel)
 - (CGSize)dataController:(ASDataController *)dataController constrainedSizeForNodeAtIndexPath:(NSIndexPath *)indexPath
 {
   return CGSizeMake(self.bounds.size.width, FLT_MAX);
+}
+
+- (void)dataControllerLockDataSource
+{
+  ASDisplayNodeAssert(!self.asyncDataSourceLocked, @"The data source has already been locked");
+
+  self.asyncDataSourceLocked = YES;
+
+  if ([_asyncDataSource respondsToSelector:@selector(tableViewLockDataSource:)]) {
+    [_asyncDataSource tableViewLockDataSource:self];
+  }
+}
+
+- (void)dataControllerUnlockDataSource
+{
+  ASDisplayNodeAssert(self.asyncDataSourceLocked, @"The data source has already been unlocked");
+
+  self.asyncDataSourceLocked = NO;
+
+  if ([_asyncDataSource respondsToSelector:@selector(tableViewUnlockDataSource:)]) {
+    [_asyncDataSource tableViewUnlockDataSource:self];
+  }
 }
 
 - (NSUInteger)dataController:(ASDataController *)dataControllre rowsInSection:(NSUInteger)section

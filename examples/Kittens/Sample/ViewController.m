@@ -12,12 +12,15 @@
 #import "ViewController.h"
 
 #import <AsyncDisplayKit/AsyncDisplayKit.h>
+#import <AsyncDisplayKit/ASAssert.h>
 
 #import "BlurbNode.h"
 #import "KittenNode.h"
 
-static const NSInteger kLitterSize = 20;
 
+static const NSInteger kLitterSize = 20;
+static const NSInteger kLitterBatchSize = 10;
+static const NSInteger kMaxLitterSize = 100;
 
 @interface ViewController () <ASTableViewDataSource, ASTableViewDelegate>
 {
@@ -25,7 +28,12 @@ static const NSInteger kLitterSize = 20;
 
   // array of boxed CGSizes corresponding to placekitten kittens
   NSArray *_kittenDataSource;
+
+  BOOL _dataSourceLocked;
 }
+
+@property (nonatomic, strong) NSArray *kittenDataSource;
+@property (atomic, assign) BOOL dataSourceLocked;
 
 @end
 
@@ -40,23 +48,35 @@ static const NSInteger kLitterSize = 20;
   if (!(self = [super init]))
     return nil;
 
-  _tableView = [[ASTableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+  _tableView = [[ASTableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain asyncDataFetching:YES];
   _tableView.separatorStyle = UITableViewCellSeparatorStyleNone; // KittenNode has its own separator
   _tableView.asyncDataSource = self;
   _tableView.asyncDelegate = self;
 
   // populate our "data source" with some random kittens
-  NSMutableArray *kittenDataSource = [NSMutableArray arrayWithCapacity:kLitterSize];
-  for (NSInteger i = 0; i < kLitterSize; i++) {
+
+  _kittenDataSource = [self createLitterWithSize:kLitterSize];
+
+  return self;
+}
+
+- (NSArray *)createLitterWithSize:(NSInteger)litterSize
+{
+  NSMutableArray *kittens = [NSMutableArray arrayWithCapacity:litterSize];
+  for (NSInteger i = 0; i < litterSize; i++) {
     u_int32_t deltaX = arc4random_uniform(10) - 5;
     u_int32_t deltaY = arc4random_uniform(10) - 5;
     CGSize size = CGSizeMake(350 + 2 * deltaX, 350 + 4 * deltaY);
 
-    [kittenDataSource addObject:[NSValue valueWithCGSize:size]];
+    [kittens addObject:[NSValue valueWithCGSize:size]];
   }
-  _kittenDataSource = kittenDataSource;
+  return kittens;
+}
 
-  return self;
+- (void)setKittenDataSource:(NSArray *)kittenDataSource {
+  ASDisplayNodeAssert(!self.dataSourceLocked, @"Could not update data source when it is locked !");
+
+  _kittenDataSource = kittenDataSource;
 }
 
 - (void)viewDidLoad
@@ -103,6 +123,45 @@ static const NSInteger kLitterSize = 20;
 {
   // disable row selection
   return NO;
+}
+
+- (void)tableViewLockDataSource:(ASTableView *)tableView
+{
+  self.dataSourceLocked = YES;
+}
+
+- (void)tableViewUnlockDataSource:(ASTableView *)tableView
+{
+  self.dataSourceLocked = NO;
+}
+
+- (BOOL)shouldBatchFetchForTableView:(UITableView *)tableView
+{
+  return _kittenDataSource.count < kMaxLitterSize;
+}
+
+- (void)tableView:(UITableView *)tableView willBeginBatchFetchWithContext:(ASBatchContext *)context
+{
+  NSLog(@"adding kitties");
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    sleep(1);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NSArray *moarKittens = [self createLitterWithSize:kLitterBatchSize];
+
+      NSMutableArray *indexPaths = [[NSMutableArray alloc] init];
+      NSInteger existingKittens = _kittenDataSource.count;
+      for (NSInteger i = 0; i < moarKittens.count; i++) {
+        [indexPaths addObject:[NSIndexPath indexPathForRow:existingKittens + i inSection:0]];
+      }
+
+      _kittenDataSource = [_kittenDataSource arrayByAddingObjectsFromArray:moarKittens];
+      [tableView insertRowsAtIndexPaths:indexPaths withRowAnimation:UITableViewRowAnimationFade];
+
+      [context completeBatchFetching:YES];
+
+      NSLog(@"kittens added");
+    });
+  });
 }
 
 @end

@@ -8,9 +8,10 @@
 
 #import <UIKit/UIKit.h>
 
-#import "_ASAsyncTransactionContainer.h"
-#import "ASBaseDefines.h"
-#import "ASDealloc2MainObject.h"
+#import <AsyncDisplayKit/_ASAsyncTransactionContainer.h>
+#import <AsyncDisplayKit/ASBaseDefines.h>
+#import <AsyncDisplayKit/ASDealloc2MainObject.h>
+
 
 typedef UIView *(^ASDisplayNodeViewBlock)();
 typedef CALayer *(^ASDisplayNodeLayerBlock)();
@@ -311,7 +312,7 @@ typedef CALayer *(^ASDisplayNodeLayerBlock)();
 - (void)recursivelySetDisplaySuspended:(BOOL)flag;
 
 /**
- * @abstract Calls -reclaimMemory on the receiver and its subnode hierarchy.
+ * @abstract Calls -clearRendering on the receiver and its subnode hierarchy.
  *
  * @discussion Clears backing stores and other memory-intensive intermediates.
  * If the node is removed from a visible hierarchy and then re-added, it will automatically trigger a new asynchronous display,
@@ -321,7 +322,27 @@ typedef CALayer *(^ASDisplayNodeLayerBlock)();
  * @see displaySuspended and setNeedsDisplay
  */
 
-- (void)recursivelyReclaimMemory;
+- (void)recursivelyClearRendering;
+
+/**
+ * @abstract Calls -clearRemoteData on the receiver and its subnode hierarchy.
+ *
+ * @discussion Clears any memory-intensive fetched content.
+ * This method is used to notify the node that it should purge any content that is both expensive to fetch and to
+ * retain in memory.
+ *
+ * @see clearRemoteData and fetchRemoteData
+ */
+- (void)recursivelyClearRemoteData;
+
+/**
+ * @abstract Calls -fetchRemoteData on the receiver and its subnode hierarchy.
+ *
+ * @discussion Fetches content from remote sources for the current node and all subnodes.
+ *
+ * @see fetchRemoteData and clearRemoteData
+ */
+- (void)recursivelyFetchRemoteData;
 
 /**
  * @abstract Toggle displaying a placeholder over the node that covers content until the node and all subnodes are
@@ -332,11 +353,11 @@ typedef CALayer *(^ASDisplayNodeLayerBlock)();
 @property (nonatomic, assign) BOOL placeholderEnabled;
 
 /**
- * @abstract Toggle to fade-out the placeholder when a node's contents are finished displaying.
+ * @abstract Set the time it takes to fade out the placeholder when a node's contents are finished displaying.
  *
- * @discussion Defaults to NO.
+ * @discussion Defaults to 0 seconds.
  */
-@property (nonatomic, assign) BOOL placeholderFadesOut;
+@property (nonatomic, assign) NSTimeInterval placeholderFadeDuration;
 
 
 /** @name Hit Testing */
@@ -535,4 +556,12 @@ typedef CALayer *(^ASDisplayNodeLayerBlock)();
  * Convenience method, equivalent to [layer addSublayer:node.layer].
  */
 - (void)addSubnode:(ASDisplayNode *)node;
+@end
+
+@interface ASDisplayNode (Deprecated)
+
+- (void)reclaimMemory ASDISPLAYNODE_DEPRECATED;
+- (void)recursivelyReclaimMemory ASDISPLAYNODE_DEPRECATED;
+@property (nonatomic, assign) BOOL placeholderFadesOut ASDISPLAYNODE_DEPRECATED;
+
 @end
