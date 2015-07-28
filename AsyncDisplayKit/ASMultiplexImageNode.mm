@@ -139,6 +139,13 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
  */
 - (void)_downloadImageWithIdentifier:(id)imageIdentifier URL:(NSURL *)imageURL completion:(void (^)(UIImage *image, NSError *error))completionBlock;
 
+/**
+ @abstract Returns a Boolean value indicating whether the downloaded image should be removed when clearing fetched data
+ @discussion Downloaded image data should only be cleared out if a cache is present
+ @return YES if an image cache is available; otherwise, NO.
+ */
+- (BOOL)_shouldClearFetchedImageData;
+
 @end
 
 @implementation ASMultiplexImageNode
@@ -162,9 +169,9 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 }
 
 #pragma mark - ASDisplayNode Overrides
-- (void)clearRendering
+- (void)clearContents
 {
-  [super clearRendering]; // This actually clears the contents, so we need to do this first for our displayedImageIdentifier to be meaningful.
+  [super clearContents]; // This actually clears the contents, so we need to do this first for our displayedImageIdentifier to be meaningful.
   [self _setDisplayedImageIdentifier:nil withImage:nil];
 
   if (_downloadIdentifier) {
@@ -173,16 +180,20 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   }
 }
 
-- (void)displayWillStart
+- (void)clearFetchedData
 {
-  [super displayWillStart];
-
-  [self fetchRemoteData];
+  [super clearFetchedData];
+    
+  if ([self _shouldClearFetchedImageData]) {
+    // setting this to nil makes the node fetch images the next time its display starts
+    _loadedImageIdentifier = nil;
+    self.image = nil;
+  }
 }
 
-- (void)fetchRemoteData
+- (void)fetchData
 {
-  [super fetchRemoteData];
+  [super fetchData];
 
   [self _loadImageIdentifiers];
 }
@@ -624,6 +635,10 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   // Load our next image, if we have one to load.
   if ([self _nextImageIdentifierToDownload])
     [self _loadNextImage];
+}
+
+- (BOOL)_shouldClearFetchedImageData {
+  return _cache != nil;
 }
 
 @end
