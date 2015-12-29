@@ -11,6 +11,8 @@
 #import <AsyncDisplayKit/ASLayoutSpec.h>
 #import <AsyncDisplayKit/ASLayoutable.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 /**
  Ratio layout spec
  For when the content should respect a certain inherent ratio but can be scaled (think photos or videos)
@@ -31,6 +33,10 @@
  **/
 @interface ASRatioLayoutSpec : ASLayoutSpec
 
-+ (instancetype)newWithRatio:(CGFloat)ratio child:(id<ASLayoutable>)child;
+@property (nonatomic, assign) CGFloat ratio;
+
++ (instancetype)ratioLayoutSpecWithRatio:(CGFloat)ratio child:(id<ASLayoutable>)child;
 
 @end
+
+NS_ASSUME_NONNULL_END

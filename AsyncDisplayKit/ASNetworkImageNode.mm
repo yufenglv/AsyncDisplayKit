@@ -10,14 +10,15 @@
 
 #import "ASBasicImageDownloader.h"
 #import "ASDisplayNode+Subclasses.h"
+#import "ASDisplayNode+FrameworkPrivate.h"
+#import "ASEqualityHelpers.h"
 #import "ASThread.h"
-
 
 @interface ASNetworkImageNode ()
 {
   ASDN::RecursiveMutex _lock;
-  id<ASImageCacheProtocol> _cache;
-  id<ASImageDownloaderProtocol> _downloader;
+  __weak id<ASImageCacheProtocol> _cache;
+  __weak id<ASImageDownloaderProtocol> _downloader;
 
   // Only access any of these with _lock.
   __weak id<ASNetworkImageNodeDelegate> _delegate;
@@ -30,9 +31,7 @@
 
   BOOL _imageLoaded;
 }
-
 @end
-
 
 @implementation ASNetworkImageNode
 
@@ -44,13 +43,14 @@
   _cache = cache;
   _downloader = downloader;
   _shouldCacheImage = YES;
+  self.shouldBypassEnsureDisplay = YES;
 
   return self;
 }
 
 - (instancetype)init
 {
-  return [self initWithCache:nil downloader:[[ASBasicImageDownloader alloc] init]];
+  return [self initWithCache:nil downloader:[ASBasicImageDownloader sharedImageDownloader]];
 }
 
 - (void)dealloc
@@ -69,7 +69,7 @@
 {
   ASDN::MutexLocker l(_lock);
 
-  if (URL == _URL || [URL isEqual:_URL]) {
+  if (ASObjectIsEqual(URL, _URL)) {
     return;
   }
 
@@ -80,9 +80,10 @@
 
   if (reset || _URL == nil)
     self.image = _defaultImage;
-
-  if (self.nodeLoaded && self.layer.superlayer)
-    [self _lazilyLoadImageIfNecessary];
+  
+  if (self.interfaceState & ASInterfaceStateFetchData) {
+    [self fetchData];
+  }
 }
 
 - (NSURL *)URL
@@ -95,7 +96,7 @@
 {
   ASDN::MutexLocker l(_lock);
 
-  if (defaultImage == _defaultImage || [defaultImage isEqual:_defaultImage]) {
+  if (ASObjectIsEqual(defaultImage, _defaultImage)) {
     return;
   }
   _defaultImage = defaultImage;
@@ -187,14 +188,23 @@
         ASDN::MutexLocker l(_lock);
 
         dispatch_async(dispatch_get_main_queue(), ^{
-          _imageLoaded = YES;
-
           if (self.shouldCacheImage) {
-            self.image = [UIImage imageNamed:_URL.path];
+            self.image = [UIImage imageNamed:_URL.path.lastPathComponent];
           } else {
+            // First try to load the path directly, for efficiency assuming a developer who
+            // doesn't want caching is trying to be as minimal as possible.
             self.image = [UIImage imageWithContentsOfFile:_URL.path];
+            if (!self.image) {
+              // If we couldn't find it, execute an -imageNamed:-like search so we can find resources even if the
+              // extension is not provided in the path.  This allows the same path to work regardless of shouldCacheImage.
+              NSString *filename = [[NSBundle mainBundle] pathForResource:_URL.path.lastPathComponent ofType:nil];
+              if (filename) {
+                self.image = [UIImage imageWithContentsOfFile:filename];
+              }
+            }
           }
-
+          
+          _imageLoaded = YES;
           [_delegate imageNode:self didLoadImage:self.image];
         });
       }

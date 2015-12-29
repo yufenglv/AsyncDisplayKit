@@ -16,7 +16,7 @@
 
 #define NumberOfSections 10
 #define NumberOfRowsPerSection 20
-#define NumberOfReloadIterations 500
+#define NumberOfReloadIterations 50
 
 @interface ViewController () <ASTableViewDataSource, ASTableViewDelegate>
 {
@@ -100,9 +100,6 @@
 
 - (void)thrashTableView
 {
-  _tableView.asyncDelegate = self;
-  _tableView.asyncDataSource = self;
-  
   [_tableView reloadData];
   
   NSArray *indexPathsAddedAndRemoved = nil;

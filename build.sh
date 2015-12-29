@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # **** Update me when new Xcode versions are released! ****
-PLATFORM="platform=iOS Simulator,OS=8.1,name=iPhone 6"
-SDK="iphonesimulator8.1"
+PLATFORM="platform=iOS Simulator,OS=9.2,name=iPhone 6"
+SDK="iphonesimulator9.2"
 
 
 # It is pitch black.
@@ -53,6 +53,19 @@ if [ "$MODE" = "life-without-cocoapods" ]; then
     xctool \
         -workspace "smoke-tests/Life Without CocoaPods/Life Without CocoaPods.xcworkspace" \
         -scheme "Life Without CocoaPods" \
+        -sdk "$SDK" \
+        -destination "$PLATFORM" \
+        build
+    trap - EXIT
+    exit 0
+fi
+
+if [ "$MODE" = "framework" ]; then
+    echo "Verifying that AsyncDisplayKit functions as a dynamic framework (for Swift/Carthage users)."
+
+    xctool \
+        -project "smoke-tests/Framework/Sample.xcodeproj" \
+        -scheme Sample \
         -sdk "$SDK" \
         -destination "$PLATFORM" \
         build

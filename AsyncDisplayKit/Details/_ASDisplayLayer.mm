@@ -14,6 +14,7 @@
 #import "ASAssert.h"
 #import "ASDisplayNode.h"
 #import "ASDisplayNodeInternal.h"
+#import "ASDisplayNode+FrameworkPrivate.h"
 
 @implementation _ASDisplayLayer
 {
@@ -36,11 +37,6 @@
     _displaySentinel = [[ASSentinel alloc] init];
 
     self.opaque = YES;
-
-#if DEBUG
-    // This is too expensive to do in production on all layers.
-    self.name = [NSString stringWithFormat:@"%@ (%p)", NSStringFromClass([self class]), self];
-#endif
   }
   return self;
 }
@@ -151,11 +147,9 @@
 
 - (void)displayImmediately
 {
-  // REVIEW: Should this respect isDisplaySuspended?  If so, we'd probably want to synchronously display when
-  // setDisplaySuspended:No is called, rather than just scheduling.  The thread affinity for the displayImmediately
-  // call will be tricky if we need to support this, though.  It probably should just execute if displayImmediately is
-  // called directly.  The caller should be responsible for not calling displayImmediately if it wants to obey the
-  // suspended state.
+  // This method is a low-level bypass that avoids touching CA, including any reset of the
+  // needsDisplay flag, until the .contents property is set with the result.
+  // It is designed to be able to block the thread of any caller and fully execute the display.
 
   ASDisplayNodeAssertMainThread();
   [self display:NO];

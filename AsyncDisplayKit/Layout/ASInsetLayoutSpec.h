@@ -10,6 +10,8 @@
 
 #import <AsyncDisplayKit/ASLayoutSpec.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 /**
  A layout spec that wraps another layoutable child, applying insets around it.
 
@@ -29,10 +31,14 @@
  */
 @interface ASInsetLayoutSpec : ASLayoutSpec
 
+@property (nonatomic, assign) UIEdgeInsets insets;
+
 /**
  @param insets The amount of space to inset on each side.
- @param child The wrapped child to inset. If nil, this method returns nil.
+ @param child The wrapped child to inset.
  */
-+ (instancetype)newWithInsets:(UIEdgeInsets)insets child:(id<ASLayoutable>)child;
++ (instancetype)insetLayoutSpecWithInsets:(UIEdgeInsets)insets child:(id<ASLayoutable>)child;
 
 @end
+
+NS_ASSUME_NONNULL_END

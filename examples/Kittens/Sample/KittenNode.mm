@@ -29,6 +29,8 @@ static const CGFloat kInnerPadding = 10.0f;
   ASNetworkImageNode *_imageNode;
   ASTextNode *_textNode;
   ASDisplayNode *_divider;
+  BOOL _isImageEnlarged;
+  BOOL _swappedTextAndImage;
 }
 
 @end
@@ -36,7 +38,7 @@ static const CGFloat kInnerPadding = 10.0f;
 
 @implementation KittenNode
 
-// lorem ipsum text courtesy http://kittyipsum.com/ <3
+// lorem ipsum text courtesy https://kittyipsum.com/ <3
 + (NSArray *)placeholders
 {
   static NSArray *placeholders = nil;
@@ -80,10 +82,11 @@ static const CGFloat kInnerPadding = 10.0f;
   // kitten image, with a solid background colour serving as placeholder
   _imageNode = [[ASNetworkImageNode alloc] init];
   _imageNode.backgroundColor = ASDisplayNodeDefaultPlaceholderColor();
-  _imageNode.URL = [NSURL URLWithString:[NSString stringWithFormat:@"http://placekitten.com/%zd/%zd",
+  _imageNode.URL = [NSURL URLWithString:[NSString stringWithFormat:@"https://placekitten.com/%zd/%zd",
                                                                    (NSInteger)roundl(_kittenSize.width),
                                                                    (NSInteger)roundl(_kittenSize.height)]];
 //  _imageNode.contentMode = UIViewContentModeCenter;
+  [_imageNode addTarget:self action:@selector(toggleNodesSwap) forControlEvents:ASControlNodeEventTouchUpInside];
   [self addSubnode:_imageNode];
 
   // lorem ipsum text, plus some nice styling
@@ -131,21 +134,19 @@ static const CGFloat kInnerPadding = 10.0f;
 #if UseAutomaticLayout
 - (ASLayoutSpec *)layoutSpecThatFits:(ASSizeRange)constrainedSize
 {
-  ASRatioLayoutSpec *imagePlaceholder = [ASRatioLayoutSpec newWithRatio:1.0 child:_imageNode];
-  imagePlaceholder.flexBasis = ASRelativeDimensionMakeWithPoints(kImageSize);
-  
+  _imageNode.preferredFrameSize = _isImageEnlarged ? CGSizeMake(2.0 * kImageSize, 2.0 * kImageSize) : CGSizeMake(kImageSize, kImageSize);
   _textNode.flexShrink = YES;
   
-  return
-  [ASInsetLayoutSpec
-   newWithInsets:UIEdgeInsetsMake(kOuterPadding, kOuterPadding, kOuterPadding, kOuterPadding)
-   child:
-   [ASStackLayoutSpec
-    newWithStyle:{
-      .direction = ASStackLayoutDirectionHorizontal,
-      .spacing = kInnerPadding
-    }
-    children:@[imagePlaceholder, _textNode]]];
+  ASStackLayoutSpec *stackSpec = [[ASStackLayoutSpec alloc] init];
+  stackSpec.direction = ASStackLayoutDirectionHorizontal;
+  stackSpec.spacing = kInnerPadding;
+  [stackSpec setChildren:!_swappedTextAndImage ? @[_imageNode, _textNode] : @[_textNode, _imageNode]];
+  
+  ASInsetLayoutSpec *insetSpec = [[ASInsetLayoutSpec alloc] init];
+  insetSpec.insets = UIEdgeInsetsMake(kOuterPadding, kOuterPadding, kOuterPadding, kOuterPadding);
+  insetSpec.child = stackSpec;
+  
+  return insetSpec;
 }
 
 // With box model, you don't need to override this method, unless you want to add custom logic.
@@ -180,5 +181,50 @@ static const CGFloat kInnerPadding = 10.0f;
   _textNode.frame = CGRectMake(kOuterPadding + kImageSize + kInnerPadding, kOuterPadding, textSize.width, textSize.height);
 }
 #endif
+
+- (void)toggleImageEnlargement
+{
+  _isImageEnlarged = !_isImageEnlarged;
+  [self setNeedsLayout];
+}
+
+- (void)toggleNodesSwap
+{
+  _swappedTextAndImage = !_swappedTextAndImage;
+  
+  [UIView animateWithDuration:0.15 animations:^{
+    self.alpha = 0;
+  } completion:^(BOOL finished) {
+    [self setNeedsLayout];
+    [self.view layoutIfNeeded];
+    
+    [UIView animateWithDuration:0.15 animations:^{
+      self.alpha = 1;
+    }];
+  }];
+}
+
+- (void)updateBackgroundColor
+{
+  if (self.highlighted) {
+    self.backgroundColor = [UIColor lightGrayColor];
+  } else if (self.selected) {
+    self.backgroundColor = [UIColor blueColor];
+  } else {
+    self.backgroundColor = [UIColor whiteColor];
+  }
+}
+
+- (void)setSelected:(BOOL)selected
+{
+  [super setSelected:selected];
+  [self updateBackgroundColor];
+}
+
+- (void)setHighlighted:(BOOL)highlighted
+{
+  [super setHighlighted:highlighted];
+  [self updateBackgroundColor];
+}
 
 @end

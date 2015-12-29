@@ -7,28 +7,53 @@
  */
 
 #import <UIKit/UIKit.h>
-
 #import <AsyncDisplayKit/ASRangeController.h>
 #import <AsyncDisplayKit/ASTableViewProtocols.h>
 #import <AsyncDisplayKit/ASBaseDefines.h>
 #import <AsyncDisplayKit/ASBatchContext.h>
 
+NS_ASSUME_NONNULL_BEGIN
 
 @class ASCellNode;
-@protocol ASTableViewDataSource;
-@protocol ASTableViewDelegate;
-
+@protocol ASTableDataSource;
+@protocol ASTableDelegate;
 
 /**
- * Node-based table view.
+ * Asynchronous UITableView with Intelligent Preloading capabilities.
  *
- * ASTableView is a version of UITableView that uses nodes -- specifically, ASCellNode subclasses -- with asynchronous
- * pre-rendering instead of synchronously loading UITableViewCells.
+ * ASTableNode is recommended over ASTableView.  This class is provided for adoption convenience.
+ *
+ * ASTableView is a true subclass of UITableView, meaning it is pointer-compatible with code that
+ * currently uses UITableView
+ *
+ * The main difference is that asyncDataSource expects -nodeForRowAtIndexPath, an ASCellNode, and
+ * the heightForRowAtIndexPath: method is eliminated (as are the performance problems caused by it).
+ * This is made possible because ASCellNodes can calculate their own size, and preload ahead of time.
  */
 @interface ASTableView : UITableView
 
-@property (nonatomic, weak) id<ASTableViewDataSource> asyncDataSource;
-@property (nonatomic, weak) id<ASTableViewDelegate> asyncDelegate;      // must not be nil
+@property (nonatomic, weak) id<ASTableDelegate>   asyncDelegate;
+@property (nonatomic, weak) id<ASTableDataSource> asyncDataSource;
+
+/**
+ * Initializer.
+ *
+ * @param frame A rectangle specifying the initial location and size of the table view in its superview’s coordinates.
+ * The frame of the table view changes as table cells are added and deleted.
+ *
+ * @param style A constant that specifies the style of the table view. See UITableViewStyle for descriptions of valid constants.
+ *
+ * @param asyncDataFetchingEnabled This option is reserved for future use, and currently a no-op.
+ *
+ * @discussion If asyncDataFetching is enabled, the `ASTableView` will fetch data through `tableView:numberOfRowsInSection:` and
+ * `tableView:nodeForRowAtIndexPath:` in async mode from background thread. Otherwise, the methods will be invoked synchronically
+ * from calling thread.
+ * Enabling asyncDataFetching could avoid blocking main thread for `ASCellNode` allocation, which is frequently reported issue for
+ * large scale data. On another hand, the application code need take the responsibility to avoid data inconsistence. Specifically,
+ * we will lock the data source through `tableViewLockDataSource`, and unlock it by `tableViewUnlockDataSource` after the data fetching.
+ * The application should not update the data source while the data source is locked, to keep data consistence.
+ */
+- (instancetype)initWithFrame:(CGRect)frame style:(UITableViewStyle)style asyncDataFetching:(BOOL)asyncDataFetchingEnabled;
 
 /**
  * Tuning parameters for a range.
@@ -51,26 +76,6 @@
 - (void)setTuningParameters:(ASRangeTuningParameters)tuningParameters forRangeType:(ASLayoutRangeType)rangeType;
 
 /**
- * Initializer.
- *
- * @param frame A rectangle specifying the initial location and size of the table view in its superview’s coordinates. 
- * The frame of the table view changes as table cells are added and deleted.
- *
- * @param style A constant that specifies the style of the table view. See UITableViewStyle for descriptions of valid constants.
- *
- * @param asyncDataFetchingEnabled Enable the data fetching in async mode.
- * 
- * @discussion If asyncDataFetching is enabled, the `ASTableView` will fetch data through `tableView:numberOfRowsInSection:` and
- * `tableView:nodeForRowAtIndexPath:` in async mode from background thread. Otherwise, the methods will be invoked synchronically 
- * from calling thread.
- * Enabling asyncDataFetching could avoid blocking main thread for `ASCellNode` allocation, which is frequently reported issue for 
- * large scale data. On another hand, the application code need take the responsibility to avoid data inconsistence. Specifically, 
- * we will lock the data source through `tableViewLockDataSource`, and unlock it by `tableViewUnlockDataSource` after the data fetching. 
- * The application should not update the data source while the data source is locked, to keep data consistence.
- */
-- (instancetype)initWithFrame:(CGRect)frame style:(UITableViewStyle)style asyncDataFetching:(BOOL)asyncDataFetchingEnabled;
-
-/**
  * The number of screens left to scroll before the delegate -tableView:beginBatchFetchingWithContext: is called.
  *
  * Defaults to one screenful.
@@ -84,7 +89,7 @@
  * the main thread.
  * @warning This method is substantially more expensive than UITableView's version.
  */
--(void)reloadDataWithCompletion:(void (^)())completion;
+-(void)reloadDataWithCompletion:(void (^ _Nullable)())completion;
 
 /**
  * Reload everything from scratch, destroying the working range and all cached nodes.
@@ -94,21 +99,24 @@
 - (void)reloadData;
 
 /**
+ * Reload everything from scratch entirely on the main thread, destroying the working range and all cached nodes.
+ *
+ * @warning This method is substantially more expensive than UITableView's version and will block the main thread while
+ * all the cells load.
+ */
+- (void)reloadDataImmediately;
+
+/**
  *  begins a batch of insert, delete reload and move operations. This method must be called from the main thread.
  */
 - (void)beginUpdates;
 
 /**
- *  Concludes a series of method calls that insert, delete, select, or reload rows and sections of the table view.
+ *  Concludes a series of method calls that insert, delete, select, or reload rows and sections of the table view, with animation enabled and no completion block.
  *  You call this method to bracket a series of method calls that begins with beginUpdates and that consists of operations
  *  to insert, delete, select, and reload rows and sections of the table view. When you call endUpdates, ASTableView begins animating
  *  the operations simultaneously. This method is must be called from the main thread. It's important to remeber that the ASTableView will
  *  be processing the updates asynchronously after this call is completed.
- *
- *  @param animated   NO to disable all animations.
- *  @param completion A completion handler block to execute when all of the operations are finished. This block takes a single
- *                    Boolean parameter that contains the value YES if all of the related animations completed successfully or
- *                    NO if they were interrupted. This parameter may be nil. If supplied, the block is run on the main thread.
  */
 - (void)endUpdates;
 
@@ -125,7 +133,7 @@
  *                    Boolean parameter that contains the value YES if all of the related animations completed successfully or
  *                    NO if they were interrupted. This parameter may be nil. If supplied, the block is run on the main thread.
  */
-- (void)endUpdatesAnimated:(BOOL)animated completion:(void (^)(BOOL completed))completion;
+- (void)endUpdatesAnimated:(BOOL)animated completion:(void (^ _Nullable)(BOOL completed))completion;
 
 /**
  * Inserts one or more sections, with an option to animate the insertion.
@@ -185,7 +193,7 @@
  * @discussion This method must be called from the main thread. The asyncDataSource must be updated to reflect the changes
  * before this method is called.
  */
-- (void)insertRowsAtIndexPaths:(NSArray *)indexPaths withRowAnimation:(UITableViewRowAnimation)animation;
+- (void)insertRowsAtIndexPaths:(NSArray<NSIndexPath *> *)indexPaths withRowAnimation:(UITableViewRowAnimation)animation;
 
 /**
  * Deletes the rows specified by an array of index paths, with an option to animate the deletion.
@@ -197,7 +205,7 @@
  * @discussion This method must be called from the main thread. The asyncDataSource must be updated to reflect the changes
  * before this method is called.
  */
-- (void)deleteRowsAtIndexPaths:(NSArray *)indexPaths withRowAnimation:(UITableViewRowAnimation)animation;
+- (void)deleteRowsAtIndexPaths:(NSArray<NSIndexPath *> *)indexPaths withRowAnimation:(UITableViewRowAnimation)animation;
 
 /**
  * Reloads the specified rows using a given animation effect.
@@ -209,7 +217,7 @@
  * @discussion This method must be called from the main thread. The asyncDataSource must be updated to reflect the changes
  * before this method is called.
  */
-- (void)reloadRowsAtIndexPaths:(NSArray *)indexPaths withRowAnimation:(UITableViewRowAnimation)animation;
+- (void)reloadRowsAtIndexPaths:(NSArray<NSIndexPath *> *)indexPaths withRowAnimation:(UITableViewRowAnimation)animation;
 
 /**
  * Moves the row at a specified location to a destination location.
@@ -233,11 +241,20 @@
 - (ASCellNode *)nodeForRowAtIndexPath:(NSIndexPath *)indexPath;
 
 /**
+ * Similar to -indexPathForCell:.
+ *
+ * @param cellNode a cellNode part of the table view
+ *
+ * @returns an indexPath for this cellNode
+ */
+- (nullable NSIndexPath *)indexPathForNode:(ASCellNode *)cellNode;
+
+/**
  * Similar to -visibleCells.
  *
  * @returns an array containing the nodes being displayed on screen.
  */
-- (NSArray *)visibleNodes;
+- (NSArray<ASDisplayNode *> *)visibleNodes;
 
 /**
  * YES to automatically adjust the contentOffset when cells are inserted or deleted "before"
@@ -248,13 +265,27 @@
  */
 @property (nonatomic) BOOL automaticallyAdjustsContentOffset;
 
+/**
+ * Triggers all loaded ASCellNodes to destroy displayed contents (freeing a lot of memory).
+ *
+ * @discussion This method should only be called by ASTableNode.  To be removed in a later release.
+ */
+- (void)clearContents;
+
+/**
+ * Triggers all loaded ASCellNodes to purge any data fetched from the network or disk (freeing memory).
+ *
+ * @discussion This method should only be called by ASTableNode.  To be removed in a later release.
+ */
+- (void)clearFetchedData;
+
 @end
 
 
 /**
  * This is a node-based UITableViewDataSource.
  */
-@protocol ASTableViewDataSource <ASCommonTableViewDataSource, NSObject>
+@protocol ASTableDataSource <ASCommonTableViewDataSource, NSObject>
 
 /**
  * Similar to -tableView:cellForRowAtIndexPath:.
@@ -291,6 +322,8 @@
 
 @end
 
+@protocol ASTableViewDataSource <ASTableDataSource>
+@end
 
 /**
  * This is a node-based UITableViewDelegate.
@@ -298,12 +331,12 @@
  * Note that -tableView:heightForRowAtIndexPath: has been removed; instead, your custom ASCellNode subclasses are
  * responsible for deciding their preferred onscreen height in -calculateSizeThatFits:.
  */
-@protocol ASTableViewDelegate <ASCommonTableViewDelegate, NSObject>
+@protocol ASTableDelegate <ASCommonTableViewDelegate, NSObject>
 
 @optional
 
 - (void)tableView:(ASTableView *)tableView willDisplayNodeForRowAtIndexPath:(NSIndexPath *)indexPath;
-- (void)tableView:(ASTableView *)tableView didEndDisplayingNodeForRowAtIndexPath:(NSIndexPath*)indexPath;
+- (void)tableView:(ASTableView *)tableView didEndDisplayingNodeForRowAtIndexPath:(NSIndexPath *)indexPath;
 
 /**
  * Receive a message that the tableView is near the end of its data set and more data should be fetched if necessary.
@@ -334,8 +367,7 @@
 
 @end
 
-@interface ASTableView (Deprecated)
-
-@property (nonatomic, assign) ASRangeTuningParameters rangeTuningParameters ASDISPLAYNODE_DEPRECATED;
-
+@protocol ASTableViewDelegate <ASTableDelegate>
 @end
+
+NS_ASSUME_NONNULL_END

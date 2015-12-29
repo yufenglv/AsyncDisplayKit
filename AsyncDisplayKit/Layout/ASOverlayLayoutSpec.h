@@ -10,11 +10,17 @@
 
 #import <AsyncDisplayKit/ASLayoutSpec.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 /**
  This layout spec lays out a single layoutable child and then overlays a layoutable object on top of it streched to its size
  */
 @interface ASOverlayLayoutSpec : ASLayoutSpec
 
-+ (instancetype)newWithChild:(id<ASLayoutable>)child overlay:(id<ASLayoutable>)overlay;
+@property (nullable, nonatomic, strong) id<ASLayoutable> overlay;
+
++ (instancetype)overlayLayoutSpecWithChild:(id<ASLayoutable>)child overlay:(nullable id<ASLayoutable>)overlay;
 
 @end
+
+NS_ASSUME_NONNULL_END

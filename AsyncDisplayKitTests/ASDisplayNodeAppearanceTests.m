@@ -49,6 +49,7 @@ static dispatch_block_t modifyMethodByAddingPrologueBlockAndReturnCleanupBlock(C
 
 @interface ASDisplayNode (PrivateStuffSoWeDontPullInCPPInternalH)
 - (BOOL)__visibilityNotificationsDisabled;
+- (BOOL)__selfOrParentHasVisibilityNotificationsDisabled;
 - (id)initWithViewClass:(Class)viewClass;
 - (id)initWithLayerClass:(Class)layerClass;
 @end
@@ -56,9 +57,15 @@ static dispatch_block_t modifyMethodByAddingPrologueBlockAndReturnCleanupBlock(C
 @interface ASDisplayNodeAppearanceTests : XCTestCase
 @end
 
+// Conveniences for making nodes named a certain way
 #define DeclareNodeNamed(n) ASDisplayNode *n = [[ASDisplayNode alloc] init]; n.name = @#n
-#define DeclareViewNamed(v) UIView *v = [[UIView alloc] init]; v.layer.asyncdisplaykit_name = @#v
-#define DeclareLayerNamed(l) CALayer *l = [[CALayer alloc] init]; l.asyncdisplaykit_name = @#l
+#define DeclareViewNamed(v) UIView *v = viewWithName(@#v)
+
+static UIView *viewWithName(NSString *name) {
+  ASDisplayNode *n = [[ASDisplayNode alloc] init];
+  n.name = name;
+  return n.view;
+}
 
 @implementation ASDisplayNodeAppearanceTests
 {
@@ -354,6 +361,7 @@ static dispatch_block_t modifyMethodByAddingPrologueBlockAndReturnCleanupBlock(C
   }
   if (useManualDisable) {
     XCTAssertTrue([child __visibilityNotificationsDisabled], @"Should not have re-enabled yet");
+    XCTAssertTrue([child __selfOrParentHasVisibilityNotificationsDisabled], @"Should not have re-enabled yet");
     ASDisplayNodeEnableHierarchyNotifications(child);
   }
 
@@ -371,6 +379,7 @@ static dispatch_block_t modifyMethodByAddingPrologueBlockAndReturnCleanupBlock(C
   }
   if (useManualDisable) {
     XCTAssertTrue([child __visibilityNotificationsDisabled], @"Should not have re-enabled yet");
+    XCTAssertTrue([child __selfOrParentHasVisibilityNotificationsDisabled], @"Should not have re-enabled yet");
     ASDisplayNodeEnableHierarchyNotifications(child);
   }
 
@@ -384,6 +393,7 @@ static dispatch_block_t modifyMethodByAddingPrologueBlockAndReturnCleanupBlock(C
 
   // Make sure that we don't leave these unbalanced
   XCTAssertFalse([child __visibilityNotificationsDisabled], @"Unbalanced visibility notifications calls");
+  XCTAssertFalse([child __selfOrParentHasVisibilityNotificationsDisabled], @"Should not have re-enabled yet");
 
   [window release];
 }

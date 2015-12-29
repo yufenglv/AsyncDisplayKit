@@ -11,6 +11,7 @@
 #import "ASLayout.h"
 #import "ASAssert.h"
 #import "ASLayoutSpecUtilities.h"
+#import "ASInternalHelpers.h"
 #import <stack>
 
 CGPoint const CGPointNull = {NAN, NAN};
@@ -22,36 +23,42 @@ extern BOOL CGPointIsNull(CGPoint point)
 
 @implementation ASLayout
 
-+ (instancetype)newWithLayoutableObject:(id<ASLayoutable>)layoutableObject
-                                   size:(CGSize)size
-                               position:(CGPoint)position
-                             sublayouts:(NSArray *)sublayouts
++ (instancetype)layoutWithLayoutableObject:(id<ASLayoutable>)layoutableObject
+                                      size:(CGSize)size
+                                  position:(CGPoint)position
+                                sublayouts:(NSArray *)sublayouts
 {
   ASDisplayNodeAssert(layoutableObject, @"layoutableObject is required.");
+#if DEBUG
   for (ASLayout *sublayout in sublayouts) {
     ASDisplayNodeAssert(!CGPointIsNull(sublayout.position), @"Invalid position is not allowed in sublayout.");
   }
+#endif
   
   ASLayout *l = [super new];
   if (l) {
     l->_layoutableObject = layoutableObject;
-    l->_size = size;
-    l->_position = position;
+    l->_size = CGSizeMake(ASCeilPixelValue(size.width), ASCeilPixelValue(size.height));
+    if (CGPointIsNull(position) == NO) {
+      l->_position = CGPointMake(ASCeilPixelValue(position.x), ASCeilPixelValue(position.y));
+    } else {
+      l->_position = position;
+    }
     l->_sublayouts = [sublayouts copy];
   }
   return l;
 }
 
-+ (instancetype)newWithLayoutableObject:(id<ASLayoutable>)layoutableObject
-                                   size:(CGSize)size
-                             sublayouts:(NSArray *)sublayouts
++ (instancetype)layoutWithLayoutableObject:(id<ASLayoutable>)layoutableObject
+                                      size:(CGSize)size
+                                sublayouts:(NSArray *)sublayouts
 {
-  return [self newWithLayoutableObject:layoutableObject size:size position:CGPointNull sublayouts:sublayouts];
+  return [self layoutWithLayoutableObject:layoutableObject size:size position:CGPointNull sublayouts:sublayouts];
 }
 
-+ (instancetype)newWithLayoutableObject:(id<ASLayoutable>)layoutableObject size:(CGSize)size
++ (instancetype)layoutWithLayoutableObject:(id<ASLayoutable>)layoutableObject size:(CGSize)size
 {
-  return [self newWithLayoutableObject:layoutableObject size:size sublayouts:nil];
+  return [self layoutWithLayoutableObject:layoutableObject size:size sublayouts:nil];
 }
 
 - (ASLayout *)flattenedLayoutUsingPredicateBlock:(BOOL (^)(ASLayout *))predicateBlock
@@ -76,10 +83,10 @@ extern BOOL CGPointIsNull(CGPoint point)
       context.visited = YES;
       
       if (predicateBlock(context.layout)) {
-        [flattenedSublayouts addObject:[ASLayout newWithLayoutableObject:context.layout.layoutableObject
-                                                                  size:context.layout.size
-                                                              position:context.absolutePosition
-                                                            sublayouts:nil]];
+        [flattenedSublayouts addObject:[ASLayout layoutWithLayoutableObject:context.layout.layoutableObject
+                                                                       size:context.layout.size
+                                                                   position:context.absolutePosition
+                                                                 sublayouts:nil]];
       }
       
       for (ASLayout *sublayout in context.layout.sublayouts) {
@@ -88,7 +95,7 @@ extern BOOL CGPointIsNull(CGPoint point)
     }
   }
   
-  return [ASLayout newWithLayoutableObject:_layoutableObject size:_size sublayouts:flattenedSublayouts];
+  return [ASLayout layoutWithLayoutableObject:_layoutableObject size:_size sublayouts:flattenedSublayouts];
 }
 
 @end

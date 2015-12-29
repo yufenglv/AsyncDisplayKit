@@ -55,9 +55,9 @@
 {
   ASLayout *layout = [layoutSpecUnderTest measureWithSizeRange:sizeRange];
   layout.position = CGPointZero;
-  layout = [ASLayout newWithLayoutableObject:self size:layout.size sublayouts:@[layout]];
+  layout = [ASLayout layoutWithLayoutableObject:self size:layout.size sublayouts:@[layout]];
   _layoutUnderTest = [layout flattenedLayoutUsingPredicateBlock:^BOOL(ASLayout *evaluatedLayout) {
-    return [self.subnodes containsObject:evaluatedLayout.layoutableObject];
+    return [self.subnodes containsObject:(ASDisplayNode *)evaluatedLayout.layoutableObject];
   }];
   self.frame = CGRectMake(0, 0, _layoutUnderTest.size.width, _layoutUnderTest.size.height);
   [self measure:_layoutUnderTest.size];

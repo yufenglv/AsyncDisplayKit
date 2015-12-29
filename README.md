@@ -1,6 +1,7 @@
 ![AsyncDisplayKit](https://github.com/facebook/AsyncDisplayKit/blob/master/docs/assets/logo.png)
 
 [![Build Status](https://travis-ci.org/facebook/AsyncDisplayKit.svg)](https://travis-ci.org/facebook/AsyncDisplayKit)
+[![Coverage Status](https://coveralls.io/repos/facebook/AsyncDisplayKit/badge.svg?branch=master)](https://coveralls.io/r/facebook/AsyncDisplayKit?branch=master)
  [![Version](http://img.shields.io/cocoapods/v/AsyncDisplayKit.svg)](http://cocoapods.org/?q=AsyncDisplayKit)
  [![Platform](http://img.shields.io/cocoapods/p/AsyncDisplayKit.svg)]()
  [![License](http://img.shields.io/cocoapods/l/AsyncDisplayKit.svg)](https://github.com/facebook/AsyncDisplayKit/blob/master/LICENSE)
@@ -21,7 +22,7 @@ pod 'AsyncDisplayKit'
 
 (ASDK can also be used as a regular static library:  Copy the project to your
 codebase manually, adding `AsyncDisplayKit.xcodeproj` to your workspace.  Add
-`libAsyncDisplayKit.a`, AssetsLibrary, and Photos to the "Link Binary With
+`libAsyncDisplayKit.a`, MapKit, AssetsLibrary, and Photos to the "Link Binary With
 Libraries" build phase.  Include `-lc++ -ObjC` in your project linker flags.)
 
 Import the framework header, or create an [Objective-C bridging
@@ -56,6 +57,22 @@ dispatch_async(_backgroundQueue, ^{
 });
 ```
 
+In Swift:
+
+```swift
+dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0) {
+  let node = ASTextNode()
+  node.attributedString = NSAttributedString(string: "hello")
+  node.measure(CGSize(width: screenWidth, height: CGFloat.max))
+  node.frame = CGRect(origin: CGPointZero, size: node.calculatedSize)
+            
+  // self.view isn't a node, so we can only use it on the main thread
+  dispatch_async(dispatch_get_main_queue()) {
+   self.view.addSubview(node.view)
+  }
+}
+```
+
 AsyncDisplayKit at a glance:
 
 * `ASImageNode` and `ASTextNode` are drop-in replacements for UIImageView and
@@ -79,7 +96,7 @@ to implement node hierarchies or custom drawing.
 * Read the [Getting Started guide](http://asyncdisplaykit.org/guide/)
 * Get the [sample projects](https://github.com/facebook/AsyncDisplayKit/tree/master/examples)
 * Browse the [API reference](http://asyncdisplaykit.org/appledoc/)
-* Watch the [NSLondon talk](http://vimeo.com/103589245)
+* Watch the [NSLondon talk](http://vimeo.com/103589245) or the [NSSpain talk](https://www.youtube.com/watch?v=RY_X7l1g79Q)
 
 ## Testing
 

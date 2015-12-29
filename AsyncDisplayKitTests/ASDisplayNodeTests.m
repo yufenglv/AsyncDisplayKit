@@ -15,23 +15,36 @@
 #import "ASDisplayNode+Subclasses.h"
 #import "ASDisplayNodeTestsHelper.h"
 #import "UIView+ASConvenience.h"
+#import "ASCellNode.h"
 
 // Conveniences for making nodes named a certain way
-
 #define DeclareNodeNamed(n) ASDisplayNode *n = [[ASDisplayNode alloc] init]; n.name = @#n
-#define DeclareViewNamed(v) UIView *v = [[UIView alloc] init]; v.layer.asyncdisplaykit_name = @#v
-#define DeclareLayerNamed(l) CALayer *l = [[CALayer alloc] init]; l.asyncdisplaykit_name = @#l
+#define DeclareViewNamed(v) UIView *v = viewWithName(@#v)
+#define DeclareLayerNamed(l) CALayer *l = layerWithName(@#l)
+
+static UIView *viewWithName(NSString *name) {
+  ASDisplayNode *n = [[ASDisplayNode alloc] init];
+  n.name = name;
+  return n.view;
+}
+
+static CALayer *layerWithName(NSString *name) {
+  ASDisplayNode *n = [[ASDisplayNode alloc] init];
+  n.layerBacked = YES;
+  n.name = name;
+  return n.layer;
+}
 
 static NSString *orderStringFromSublayers(CALayer *l) {
-  return [[[l.sublayers valueForKey:@"asyncdisplaykit_name"] allObjects] componentsJoinedByString:@","];
+  return [[[l.sublayers valueForKey:@"asyncdisplaykit_node"] valueForKey:@"name"] componentsJoinedByString:@","];
 }
 
 static NSString *orderStringFromSubviews(UIView *v) {
-  return [[[v.subviews valueForKeyPath:@"layer.asyncdisplaykit_name"] allObjects] componentsJoinedByString:@","];
+  return [[[v.subviews valueForKey:@"asyncdisplaykit_node"] valueForKey:@"name"] componentsJoinedByString:@","];
 }
 
 static NSString *orderStringFromSubnodes(ASDisplayNode *n) {
-  return [[[n.subnodes valueForKey:@"name"] allObjects] componentsJoinedByString:@","];
+  return [[n.subnodes valueForKey:@"name"] componentsJoinedByString:@","];
 }
 
 // Asserts subnode, subview, sublayer order match what you provide here
@@ -64,11 +77,15 @@ for (ASDisplayNode *n in @[ nodes ]) {\
 + (dispatch_queue_t)asyncSizingQueue;
 - (id)initWithViewClass:(Class)viewClass;
 - (id)initWithLayerClass:(Class)layerClass;
+
+// FIXME: Importing ASDisplayNodeInternal.h causes a heap of problems.
+- (void)enterInterfaceState:(ASInterfaceState)interfaceState;
 @end
 
 @interface ASTestDisplayNode : ASDisplayNode
 @property (atomic, copy) void (^willDeallocBlock)(ASTestDisplayNode *node);
 @property (atomic, copy) CGSize(^calculateSizeBlock)(ASTestDisplayNode *node, CGSize size);
+@property (atomic) BOOL hasFetchedData;
 @end
 
 @interface ASTestResponderNode : ASTestDisplayNode
@@ -79,6 +96,18 @@ for (ASDisplayNode *n in @[ nodes ]) {\
 - (CGSize)calculateSizeThatFits:(CGSize)constrainedSize
 {
   return _calculateSizeBlock ? _calculateSizeBlock(self, constrainedSize) : CGSizeZero;
+}
+
+- (void)fetchData
+{
+  [super fetchData];
+  self.hasFetchedData = YES;
+}
+
+- (void)clearFetchedData
+{
+  [super clearFetchedData];
+  self.hasFetchedData = NO;
 }
 
 - (void)dealloc
@@ -1042,7 +1071,8 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
 - (void)testSubnodes
 {
   ASDisplayNode *parent = [[ASDisplayNode alloc] init];
-  XCTAssertNoThrow([parent addSubnode:nil], @"Don't try to add nil, but we'll deal.");
+  ASDisplayNode *nilNode = nil;
+  XCTAssertNoThrow([parent addSubnode:nilNode], @"Don't try to add nil, but we'll deal.");
   XCTAssertNoThrow([parent addSubnode:parent], @"Not good, test that we recover");
   XCTAssertEqual(0u, parent.subnodes.count, @"We shouldn't have any subnodes");
 }
@@ -1313,9 +1343,12 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
   [parent insertSubnode:c belowSubnode:b];
   XCTAssertEqualObjects(orderStringFromSublayers(parent.layer), @"a,e,d,c,b", @"Didn't match");
 
-  XCTAssertEqual(3u, parent.subnodes.count, @"Should have the right subnode count");
+  XCTAssertEqual(4u, parent.subnodes.count, @"Should have the right subnode count");
   XCTAssertEqual(4u, parent.view.subviews.count, @"Should have the right subview count");
   XCTAssertEqual(5u, parent.layer.sublayers.count, @"Should have the right sublayer count");
+  
+  [e removeFromSuperlayer];
+  XCTAssertEqual(4u, parent.layer.sublayers.count, @"Should have the right sublayer count");
 
   //TODO: assert that things deallocate immediately and don't have latent autoreleases in here
   [parent release];
@@ -1323,6 +1356,7 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
   [b release];
   [c release];
   [d release];
+  [e release];
 }
 
 - (void)testAppleBugInsertSubview
@@ -1374,7 +1408,6 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
   DeclareNodeNamed(b);
   DeclareNodeNamed(c);
   DeclareViewNamed(d);
-  DeclareLayerNamed(e);
 
   [parent layer];
 
@@ -1387,11 +1420,11 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
   [parent.view insertSubview:d aboveSubview:a.view];
   XCTAssertEqualObjects(orderStringFromSublayers(parent.layer), @"a,d,b", @"Didn't match");
 
-  // (a,e,d,b) => (a,d,>c<,b)
+  // (a,d,b) => (a,d,>c<,b)
   [parent insertSubnode:c belowSubnode:b];
   XCTAssertEqualObjects(orderStringFromSublayers(parent.layer), @"a,d,c,b", @"Didn't match");
 
-  XCTAssertEqual(3u, parent.subnodes.count, @"Should have the right subnode count");
+  XCTAssertEqual(4u, parent.subnodes.count, @"Should have the right subnode count");
   XCTAssertEqual(4u, parent.view.subviews.count, @"Should have the right subview count");
   XCTAssertEqual(4u, parent.layer.sublayers.count, @"Should have the right sublayer count");
 
@@ -1457,13 +1490,14 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
   XCTAssertNodesHaveParent(parent, a, b, c);
 
   // Check insertSubnode with no below
-  XCTAssertThrows([parent insertSubnode:b belowSubnode:nil], @"Can't insert below a nil");
+  ASDisplayNode *nilNode = nil;
+  XCTAssertThrows([parent insertSubnode:b belowSubnode:nilNode], @"Can't insert below a nil");
   // Check nothing was inserted
   XCTAssertNodeSubnodeSubviewSublayerOrder(parent, loaded, isLayerBacked, @"c,a,b", @"Incorrect insertion below");
 
 
-  XCTAssertThrows([parent insertSubnode:nil belowSubnode:nil], @"Can't insert a nil subnode");
-  XCTAssertThrows([parent insertSubnode:nil belowSubnode:a], @"Can't insert a nil subnode");
+  XCTAssertThrows([parent insertSubnode:nilNode belowSubnode:nilNode], @"Can't insert a nil subnode");
+  XCTAssertThrows([parent insertSubnode:nilNode belowSubnode:a], @"Can't insert a nil subnode");
 
   // Check inserting below when you're already in the array
   // (c,a,b) => (a,c,b)
@@ -1537,13 +1571,14 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
 
   // Check insertSubnode with invalid parameters throws and doesn't change anything
   // (a,c,b) => (a,c,b)
-  XCTAssertThrows([parent insertSubnode:b aboveSubnode:nil], @"Can't insert below a nil");
+  ASDisplayNode *nilNode = nil;
+  XCTAssertThrows([parent insertSubnode:b aboveSubnode:nilNode], @"Can't insert below a nil");
   XCTAssertNodeSubnodeSubviewSublayerOrder(parent, loaded, isLayerBacked, @"a,c,b", @"Check no monkey business");
 
-  XCTAssertThrows([parent insertSubnode:nil aboveSubnode:nil], @"Can't insert a nil subnode");
+  XCTAssertThrows([parent insertSubnode:nilNode aboveSubnode:nilNode], @"Can't insert a nil subnode");
   XCTAssertNodeSubnodeSubviewSublayerOrder(parent, loaded, isLayerBacked, @"a,c,b", @"Check no monkey business");
 
-  XCTAssertThrows([parent insertSubnode:nil aboveSubnode:a], @"Can't insert a nil subnode");
+  XCTAssertThrows([parent insertSubnode:nilNode aboveSubnode:a], @"Can't insert a nil subnode");
   XCTAssertNodeSubnodeSubviewSublayerOrder(parent, loaded, isLayerBacked, @"a,c,b", @"Check no monkey business");
 
   // Check inserting above when you're already in the array
@@ -1650,6 +1685,52 @@ static inline BOOL _CGPointEqualToPointWithEpsilon(CGPoint point1, CGPoint point
 - (void)testBackgroundColorOpaqueRelationshipNoLayer
 {
   [self checkBackgroundColorOpaqueRelationshipWithViewLoaded:NO layerBacked:YES];
+}
+
+// Check that nodes who have no cell node (no range controller)
+// do get their `fetchData` called, and they do report
+// the fetch data interface state.
+- (void)testInterfaceStateForNonCellNode
+{
+  ASTestWindow *window = [ASTestWindow new];
+  ASTestDisplayNode *node = [ASTestDisplayNode new];
+  XCTAssert(node.interfaceState == ASInterfaceStateNone);
+  XCTAssert(!node.hasFetchedData);
+
+  [window addSubview:node.view];
+  XCTAssert(node.hasFetchedData);
+  XCTAssert(node.interfaceState == ASInterfaceStateInHierarchy);
+
+  [node.view removeFromSuperview];
+  // We don't want to call -clearFetchedData on nodes that aren't being managed by a range controller.
+  // Otherwise we get flashing behavior from normal UIKit manipulations like navigation controller push / pop.
+  // Still, the interfaceState should be None to reflect the current state of the node.
+  // We just don't proactively clear contents or fetched data for this state transition.
+  XCTAssert(node.hasFetchedData);
+  XCTAssert(node.interfaceState == ASInterfaceStateNone);
+}
+
+// Check that nodes who have no cell node (no range controller)
+// do get their `fetchData` called, and they do report
+// the fetch data interface state.
+- (void)testInterfaceStateForCellNode
+{
+    ASCellNode *cellNode = [ASCellNode new];
+    ASTestDisplayNode *node = [ASTestDisplayNode new];
+    XCTAssert(node.interfaceState == ASInterfaceStateNone);
+    XCTAssert(!node.hasFetchedData);
+
+    // Simulate range handler updating cell node.
+    [cellNode addSubnode:node];
+    [cellNode enterInterfaceState:ASInterfaceStateFetchData];
+    XCTAssert(node.hasFetchedData);
+    XCTAssert(node.interfaceState == ASInterfaceStateFetchData);
+
+    // If the node goes into a view it should not adopt the `InHierarchy` state.
+    ASTestWindow *window = [ASTestWindow new];
+    [window addSubview:cellNode.view];
+    XCTAssert(node.hasFetchedData);
+    XCTAssert(node.interfaceState == ASInterfaceStateInHierarchy);
 }
 
 - (void)testInitWithViewClass

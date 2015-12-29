@@ -17,7 +17,10 @@
 #import "ASAvailability.h"
 #import "ASBaseDefines.h"
 #import "ASDisplayNode+Subclasses.h"
+#import "ASDisplayNode+FrameworkPrivate.h"
 #import "ASLog.h"
+#import "ASPhotosFrameworkImageRequest.h"
+#import "ASEqualityHelpers.h"
 
 #if !AS_IOS8_SDK_OR_LATER
 #error ASMultiplexImageNode can be used on iOS 7, but must be linked against the iOS 8 SDK.
@@ -26,8 +29,6 @@
 NSString *const ASMultiplexImageNodeErrorDomain = @"ASMultiplexImageNodeErrorDomain";
 
 static NSString *const kAssetsLibraryURLScheme = @"assets-library";
-static NSString *const kPHAssetURLScheme = @"ph";
-static NSString *const kPHAssetURLPrefix = @"ph://";
 
 /**
   @abstract Signature for the block to be performed after an image has loaded.
@@ -58,16 +59,18 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   struct {
     unsigned int image:1;
     unsigned int URL:1;
+    unsigned int asset:1;
   } _dataSourceFlags;
 
   // Image flags.
   BOOL _downloadsIntermediateImages; // Defaults to NO.
-  OSSpinLock _imageIdentifiersLock;
+  ASDN::Mutex _imageIdentifiersLock;
   NSArray *_imageIdentifiers;
   id _loadedImageIdentifier;
   id _loadingImageIdentifier;
   id _displayedImageIdentifier;
-
+  __weak NSOperation *_phImageRequestOperation;
+  
   // Networking.
   id _downloadIdentifier;
 }
@@ -120,14 +123,14 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 - (void)_loadALAssetWithIdentifier:(id)imageIdentifier URL:(NSURL *)assetURL completion:(void (^)(UIImage *image, NSError *error))completionBlock;
 
 /**
-  @abstract Loads the image corresponding to the given assetURL from the Photos framework.
+  @abstract Loads the image corresponding to the given image request from the Photos framework.
   @param imageIdentifier The identifier for the image to be loaded. May not be nil.
-  @param assetURL The photos framework URL (e.g., "ph://identifier") of the image to load, from PHAsset. May not be nil.
+  @param request The photos image request to load. May not be nil.
   @param completionBlock The block to be performed when the image has been loaded, if possible. May not be nil.
     @param image The image that was loaded. May be nil if no image could be downloaded.
     @param error An error describing why the load failed, if it failed; nil otherwise.
  */
-- (void)_loadPHAssetWithIdentifier:(id)imageIdentifier URL:(NSURL *)assetURL completion:(void (^)(UIImage *image, NSError *error))completionBlock;
+- (void)_loadPHAssetWithRequest:(ASPhotosFrameworkImageRequest *)request identifier:(id)imageIdentifier completion:(void (^)(UIImage *image, NSError *error))completionBlock;
 
 /**
  @abstract Downloads the image corresponding to the given imageIdentifier from the given URL.
@@ -158,6 +161,7 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 
   _cache = cache;
   _downloader = downloader;
+  self.shouldBypassEnsureDisplay = YES;
 
   return self;
 }
@@ -168,16 +172,19 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   return [self initWithCache:nil downloader:nil]; // satisfy compiler
 }
 
+- (void)dealloc
+{
+  [_phImageRequestOperation cancel];
+}
+
 #pragma mark - ASDisplayNode Overrides
+
 - (void)clearContents
 {
   [super clearContents]; // This actually clears the contents, so we need to do this first for our displayedImageIdentifier to be meaningful.
   [self _setDisplayedImageIdentifier:nil withImage:nil];
 
-  if (_downloadIdentifier) {
-    [_downloader cancelImageDownloadForIdentifier:_downloadIdentifier];
-    _downloadIdentifier = nil;
-  }
+  // NOTE: We intentionally do not cancel image downloads until `clearFetchedData`.
 }
 
 - (void)clearFetchedData
@@ -185,6 +192,11 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   [super clearFetchedData];
     
   if ([self _shouldClearFetchedImageData]) {
+    
+    [_phImageRequestOperation cancel];
+
+    [self _setDownloadIdentifier:nil];
+
     // setting this to nil makes the node fetch images the next time its display starts
     _loadedImageIdentifier = nil;
     self.image = nil;
@@ -205,7 +217,7 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   // We may now be displaying the loaded identifier, if they're different.
   UIImage *displayedImage = self.image;
   if (displayedImage) {
-    if (![_displayedImageIdentifier isEqual:_loadedImageIdentifier])
+    if (!ASObjectIsEqual(_displayedImageIdentifier, _loadedImageIdentifier))
       [self _setDisplayedImageIdentifier:_loadedImageIdentifier withImage:displayedImage];
 
     // Delegateify
@@ -250,6 +262,7 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   _dataSource = dataSource;
   _dataSourceFlags.image = [_dataSource respondsToSelector:@selector(multiplexImageNode:imageForImageIdentifier:)];
   _dataSourceFlags.URL = [_dataSource respondsToSelector:@selector(multiplexImageNode:URLForImageIdentifier:)];
+  _dataSourceFlags.asset = [_dataSource respondsToSelector:@selector(multiplexImageNode:assetForLocalIdentifier:)];
 }
 
 #pragma mark -
@@ -258,23 +271,24 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 
 - (NSArray *)imageIdentifiers
 {
-  OSSpinLockLock(&_imageIdentifiersLock);
-  NSArray *imageIdentifiers = [_imageIdentifiers copy];
-  OSSpinLockUnlock(&_imageIdentifiersLock);
-  return imageIdentifiers;
+  ASDN::MutexLocker l(_imageIdentifiersLock);
+  return _imageIdentifiers;
 }
 
 - (void)setImageIdentifiers:(NSArray *)imageIdentifiers
 {
-  OSSpinLockLock(&_imageIdentifiersLock);
+  {
+    ASDN::MutexLocker l(_imageIdentifiersLock);
+    if (ASObjectIsEqual(_imageIdentifiers, imageIdentifiers)) {
+      return;
+    }
 
-  if (_imageIdentifiers == imageIdentifiers) {
-    OSSpinLockUnlock(&_imageIdentifiersLock);
-    return;
+    _imageIdentifiers = [[NSArray alloc] initWithArray:imageIdentifiers copyItems:YES];
   }
-  
-  _imageIdentifiers = [imageIdentifiers copy];
-  OSSpinLockUnlock(&_imageIdentifiersLock);
+
+  if (self.interfaceState & ASInterfaceStateFetchData) {
+    [self fetchData];
+  }
 }
 
 - (void)reloadImageIdentifierSources
@@ -290,10 +304,10 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 #pragma mark - Core Internal
 - (void)_setDisplayedImageIdentifier:(id)displayedImageIdentifier withImage:(UIImage *)image
 {
-  if (_displayedImageIdentifier == displayedImageIdentifier)
+  if (ASObjectIsEqual(displayedImageIdentifier, _displayedImageIdentifier))
     return;
 
-  _displayedImageIdentifier = [displayedImageIdentifier copy];
+  _displayedImageIdentifier = displayedImageIdentifier;
 
   // Delegateify.
   // Note that we're using the params here instead of self.image and _displayedImageIdentifier because those can change before the async block below executes.
@@ -314,7 +328,7 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 
 - (void)_setDownloadIdentifier:(id)downloadIdentifier
 {
-  if (_downloadIdentifier == downloadIdentifier)
+  if (ASObjectIsEqual(downloadIdentifier, _downloadIdentifier))
     return;
 
   [_downloader cancelImageDownloadForIdentifier:_downloadIdentifier];
@@ -340,11 +354,10 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 
 - (UIImage *)_bestImmediatelyAvailableImageFromDataSource:(id *)imageIdentifierOut
 {
-  OSSpinLockLock(&_imageIdentifiersLock);
+  ASDN::MutexLocker l(_imageIdentifiersLock);
 
   // If we don't have any identifiers to load or don't implement the image DS method, bail.
   if ([_imageIdentifiers count] == 0 || !_dataSourceFlags.image) {
-    OSSpinLockUnlock(&_imageIdentifiersLock);
     return nil;
   }
 
@@ -353,15 +366,13 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
     UIImage *image = [_dataSource multiplexImageNode:self imageForImageIdentifier:imageIdentifier];
     if (image) {
       if (imageIdentifierOut) {
-        *imageIdentifierOut = [imageIdentifier copy];
+        *imageIdentifierOut = imageIdentifier;
       }
 
-      OSSpinLockUnlock(&_imageIdentifiersLock);
       return image;
     }
   }
 
-  OSSpinLockUnlock(&_imageIdentifiersLock);
   return nil;
 }
 
@@ -369,12 +380,11 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 #pragma mark -
 - (id)_nextImageIdentifierToDownload
 {
-  OSSpinLockLock(&_imageIdentifiersLock);
+  ASDN::MutexLocker l(_imageIdentifiersLock);
 
   // If we've already loaded the best identifier, we've got nothing else to do.
-  id bestImageIdentifier = ([_imageIdentifiers count] > 0) ? _imageIdentifiers[0] : nil;
-  if (!bestImageIdentifier || [_loadedImageIdentifier isEqual:bestImageIdentifier]) {
-    OSSpinLockUnlock(&_imageIdentifiersLock);
+  id bestImageIdentifier = _imageIdentifiers.firstObject;
+  if (!bestImageIdentifier || ASObjectIsEqual(_loadedImageIdentifier, bestImageIdentifier)) {
     return nil;
   }
 
@@ -398,8 +408,6 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
     }
   }
 
-  OSSpinLockUnlock(&_imageIdentifiersLock);
-
   return nextImageIdentifierToDownload;
 }
 
@@ -421,7 +429,7 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
       return;
 
     // Only nil out the loading identifier if the loading identifier hasn't changed.
-    if ([strongSelf.loadingImageIdentifier isEqual:nextImageIdentifier]) {
+    if (ASObjectIsEqual(strongSelf.loadingImageIdentifier, nextImageIdentifier)) {
       strongSelf.loadingImageIdentifier = nil;
     }
     [strongSelf _finishedLoadingImage:image forIdentifier:imageIdentifier error:error];
@@ -456,8 +464,8 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
     }];
   }
   // Likewise, if it's a iOS 8 Photo asset, we need to fetch it accordingly.
-  else if (AS_AT_LEAST_IOS8 && [[nextImageURL scheme] isEqualToString:kPHAssetURLScheme]) {
-    [self _loadPHAssetWithIdentifier:nextImageIdentifier URL:nextImageURL completion:^(UIImage *image, NSError *error) {
+  else if (ASPhotosFrameworkImageRequest *request = [ASPhotosFrameworkImageRequest requestWithURL:nextImageURL]) {
+    [self _loadPHAssetWithRequest:request identifier:nextImageIdentifier completion:^(UIImage *image, NSError *error) {
       ASMultiplexImageNodeCLogDebug(@"[%p] Acquired next image (%@) from Photos Framework", weakSelf, nextImageIdentifier);
       finishedLoadingBlock(image, nextImageIdentifier, error);
     }];
@@ -478,7 +486,7 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
       }
 
       // If the next image to load has changed, bail.
-      if (![[strongSelf _nextImageIdentifierToDownload] isEqual:nextImageIdentifier]) {
+      if (!ASObjectIsEqual([strongSelf _nextImageIdentifierToDownload], nextImageIdentifier)) {
         finishedLoadingBlock(nil, nil, [NSError errorWithDomain:ASMultiplexImageNodeErrorDomain code:ASMultiplexImageNodeErrorCodeBestImageIdentifierChanged userInfo:nil]);
         return;
       }
@@ -511,38 +519,95 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
   }];
 }
 
-- (void)_loadPHAssetWithIdentifier:(id)imageIdentifier URL:(NSURL *)assetURL completion:(void (^)(UIImage *image, NSError *error))completionBlock
+- (void)_loadPHAssetWithRequest:(ASPhotosFrameworkImageRequest *)request identifier:(id)imageIdentifier completion:(void (^)(UIImage *image, NSError *error))completionBlock
 {
   ASDisplayNodeAssert(AS_AT_LEAST_IOS8, @"PhotosKit is unavailable on iOS 7.");
   ASDisplayNodeAssertNotNil(imageIdentifier, @"imageIdentifier is required");
-  ASDisplayNodeAssertNotNil(assetURL, @"assetURL is required");
+  ASDisplayNodeAssertNotNil(request, @"request is required");
   ASDisplayNodeAssertNotNil(completionBlock, @"completionBlock is required");
-
-  // Get the PHAsset itself.
-  ASDisplayNodeAssertTrue([[assetURL absoluteString] hasPrefix:kPHAssetURLPrefix]);
-  NSString *assetIdentifier = [[assetURL absoluteString] substringFromIndex:[kPHAssetURLPrefix length]];
-  PHFetchResult *assetFetchResult = [PHAsset fetchAssetsWithLocalIdentifiers:@[assetIdentifier] options:nil];
-  if ([assetFetchResult count] == 0) {
-    // Error.
-    completionBlock(nil, nil);
-    return;
+  
+  /*
+   * Locking rationale:
+   * As of iOS 9, Photos.framework will eventually deadlock if you hit it with concurrent fetch requests. rdar://22984886
+   * Concurrent image requests are OK, but metadata requests aren't, so we limit ourselves to one at a time.
+   */
+  static NSLock *phRequestLock;
+  static NSOperationQueue *phImageRequestQueue;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    phRequestLock = [NSLock new];
+    phImageRequestQueue = [NSOperationQueue new];
+    phImageRequestQueue.maxConcurrentOperationCount = 10;
+    phImageRequestQueue.name = @"org.AsyncDisplayKit.MultiplexImageNode.phImageRequestQueue";
+  });
+  
+  // Each ASMultiplexImageNode can have max 1 inflight Photos image request operation
+  [_phImageRequestOperation cancel];
+  
+  __weak __typeof(self) weakSelf = self;
+  NSOperation *newImageRequestOp = [NSBlockOperation blockOperationWithBlock:^{
+    __strong __typeof(weakSelf) strongSelf = weakSelf;
+    if (strongSelf == nil) { return; }
+    
+    PHAsset *imageAsset = nil;
+    
+    // Try to get the asset immediately from the data source.
+    if (_dataSourceFlags.asset) {
+      imageAsset = [strongSelf.dataSource multiplexImageNode:strongSelf assetForLocalIdentifier:request.assetIdentifier];
+    }
+    
+    // Fall back to locking and getting the PHAsset.
+    if (imageAsset == nil) {
+      [phRequestLock lock];
+      // -[PHFetchResult dealloc] plays a role in the deadlock mentioned above, so we make sure the PHFetchResult is deallocated inside the critical section
+      @autoreleasepool {
+        imageAsset = [PHAsset fetchAssetsWithLocalIdentifiers:@[request.assetIdentifier] options:nil].firstObject;
+      }
+      [phRequestLock unlock];
+    }
+    
+    if (imageAsset == nil) {
+      NSError *error = [NSError errorWithDomain:ASMultiplexImageNodeErrorDomain code:ASMultiplexImageNodeErrorCodePHAssetIsUnavailable userInfo:nil];
+      completionBlock(nil, error);
+      return;
+    }
+    
+    PHImageRequestOptions *options = [request.options copy];
+    
+    // We don't support opportunistic delivery – one request, one image.
+    if (options.deliveryMode == PHImageRequestOptionsDeliveryModeOpportunistic) {
+      options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
+    }
+    
+    if (options.deliveryMode == PHImageRequestOptionsDeliveryModeHighQualityFormat) {
+      // Without this flag the result will be delivered on the main queue, which is pointless
+      // But synchronous -> HighQualityFormat so we only use it if high quality format is specified
+      options.synchronous = YES;
+    }
+    
+    PHImageManager *imageManager = strongSelf.imageManager ?: PHImageManager.defaultManager;
+    [imageManager requestImageForAsset:imageAsset targetSize:request.targetSize contentMode:request.contentMode options:options resultHandler:^(UIImage *image, NSDictionary *info) {
+      NSError *error = info[PHImageErrorKey];
+      
+      if (error == nil && image == nil) {
+        error = [NSError errorWithDomain:ASMultiplexImageNodeErrorDomain code:ASMultiplexImageNodeErrorCodePhotosImageManagerFailedWithoutError userInfo:nil];
+      }
+      
+      if (NSThread.isMainThread) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+          completionBlock(image, error);
+        });
+      } else {
+        completionBlock(image, error);
+      }
+    }];
+  }];
+  if (AS_AT_LEAST_IOS8) {
+    // If you don't set this, iOS will sometimes infer NSQualityOfServiceUserInteractive and promote the entire queue to that level, damaging system responsiveness
+    newImageRequestOp.qualityOfService = NSQualityOfServiceUserInitiated;
   }
-
-  // Get the best image we can.
-  PHAsset *imageAsset = [assetFetchResult firstObject];
-
-  PHImageRequestOptions *requestOptions = [[PHImageRequestOptions alloc] init];
-  requestOptions.version = PHImageRequestOptionsVersionCurrent;
-  requestOptions.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
-  requestOptions.resizeMode = PHImageRequestOptionsResizeModeNone;
-
-  [[PHImageManager defaultManager] requestImageForAsset:imageAsset
-                                             targetSize:CGSizeMake(2048.0, 2048.0) // Ideally we would use PHImageManagerMaximumSize and kill the options, but we get back nil when requesting images of video assets. rdar://18447788
-                                            contentMode:PHImageContentModeDefault
-                                                options:requestOptions
-                                          resultHandler:^(UIImage *image, NSDictionary *info) {
-                                            completionBlock(image, info[PHImageErrorKey]);
-                                          }];
+  _phImageRequestOperation = newImageRequestOp;
+  [phImageRequestQueue addOperation:newImageRequestOp];
 }
 
 - (void)_fetchImageWithIdentifierFromCache:(id)imageIdentifier URL:(NSURL *)imageURL completion:(void (^)(UIImage *image))completionBlock
@@ -608,12 +673,13 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 {
   // If we failed to load, we stop the loading process.
   // Note that if we bailed before we began downloading because the best identifier changed, we don't bail, but rather just begin loading the best image identifier.
-  if (error && error.code != ASMultiplexImageNodeErrorCodeBestImageIdentifierChanged)
+  if (error && !([error.domain isEqual:ASMultiplexImageNodeErrorDomain] && error.code == ASMultiplexImageNodeErrorCodeBestImageIdentifierChanged))
     return;
 
-  OSSpinLockLock(&_imageIdentifiersLock);
+
+  _imageIdentifiersLock.lock();
   NSUInteger imageIdentifierCount = [_imageIdentifiers count];
-  OSSpinLockUnlock(&_imageIdentifiersLock);
+  _imageIdentifiersLock.unlock();
 
   // Update our image if we got one, or if we're not supposed to display one at all.
   // We explicitly perform this check because our datasource often doesn't give back immediately available images, even though we might have downloaded one already.
@@ -639,6 +705,19 @@ typedef void(^ASMultiplexImageLoadCompletionBlock)(UIImage *image, id imageIdent
 
 - (BOOL)_shouldClearFetchedImageData {
   return _cache != nil;
+}
+
+@end
+
+@implementation NSURL (ASPhotosFrameworkURLs)
+
++ (NSURL *)URLWithAssetLocalIdentifier:(NSString *)assetLocalIdentifier targetSize:(CGSize)targetSize contentMode:(PHImageContentMode)contentMode options:(PHImageRequestOptions *)options
+{
+  ASPhotosFrameworkImageRequest *request = [[ASPhotosFrameworkImageRequest alloc] initWithAssetIdentifier:assetLocalIdentifier];
+  request.options = options;
+  request.contentMode = contentMode;
+  request.targetSize = targetSize;
+  return request.url;
 }
 
 @end
