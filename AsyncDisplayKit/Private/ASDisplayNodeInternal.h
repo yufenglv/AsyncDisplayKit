@@ -17,12 +17,14 @@
 #import "ASSentinel.h"
 #import "ASThread.h"
 #import "ASLayoutOptions.h"
+#import "_ASTransitionContext.h"
+
+#include <vector>
 
 @protocol _ASDisplayLayerDelegate;
 @class _ASDisplayLayer;
 
 BOOL ASDisplayNodeSubclassOverridesSelector(Class subclass, SEL selector);
-void ASDisplayNodeRespectThreadAffinityOfNode(ASDisplayNode *node, void (^block)());
 
 typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
 {
@@ -35,14 +37,21 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
 };
 
 @class _ASPendingState;
+@class _ASDisplayNodePosition;
+
+FOUNDATION_EXPORT NSString * const ASRenderingEngineDidDisplayScheduledNodesNotification;
+FOUNDATION_EXPORT NSString * const ASRenderingEngineDidDisplayNodesScheduledBeforeTimestamp;
 
 // Allow 2^n increments of begin disabling hierarchy notifications
 #define VISIBILITY_NOTIFICATIONS_DISABLED_BITS 4
 
-#define TIME_DISPLAYNODE_OPS (DEBUG || PROFILE)
+#define TIME_DISPLAYNODE_OPS 0 // If you're using this information frequently, try: (DEBUG || PROFILE)
 
 @interface ASDisplayNode ()
 {
+@package
+  _ASPendingState *_pendingViewState;
+
 @protected
   // Protects access to _view, _layer, _pendingViewState, _subnodes, _supernode, and other properties which are accessed from multiple threads.
   ASDN::RecursiveMutex _propertyLock;
@@ -55,10 +64,22 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
   // This is the desired contentsScale, not the scale at which the layer's contents should be displayed
   CGFloat _contentsScaleForDisplay;
 
+  ASLayout *_previousLayout;
   ASLayout *_layout;
+
+  ASSizeRange _previousConstrainedSize;
   ASSizeRange _constrainedSize;
+
   UIEdgeInsets _hitTestSlop;
   NSMutableArray *_subnodes;
+  
+  _ASTransitionContext *_transitionContext;
+  BOOL _usesImplicitHierarchyManagement;
+
+  NSArray<ASDisplayNode *> *_insertedSubnodes;
+  NSArray<ASDisplayNode *> *_removedSubnodes;
+  std::vector<NSInteger> _insertedSubnodePositions;
+  std::vector<NSInteger> _removedSubnodePositions;
 
   ASDisplayNodeViewBlock _viewBlock;
   ASDisplayNodeLayerBlock _layerBlock;
@@ -73,8 +94,6 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
 
   // keeps track of nodes/subnodes that have not finished display, used with placeholders
   NSMutableSet *_pendingDisplayNodes;
-
-  _ASPendingState *_pendingViewState;
   
   struct ASDisplayNodeFlags {
     // public properties
@@ -84,9 +103,12 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
     unsigned shouldRasterizeDescendants:1;
     unsigned shouldBypassEnsureDisplay:1;
     unsigned displaySuspended:1;
+    unsigned hasCustomDrawingPriority:1;
 
     // whether custom drawing is enabled
+    unsigned implementsInstanceDrawRect:1;
     unsigned implementsDrawRect:1;
+    unsigned implementsInstanceImageDisplay:1;
     unsigned implementsImageDisplay:1;
     unsigned implementsDrawParameters:1;
 
@@ -99,6 +121,9 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
   } _flags;
 
   ASDisplayNodeExtraIvars _extra;
+  
+  ASDisplayNodeContextModifier _willDisplayNodeContentWithRenderingContext;
+  ASDisplayNodeContextModifier _didDisplayNodeContentWithRenderingContext;
 
 #if TIME_DISPLAYNODE_OPS
 @public
@@ -109,7 +134,7 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
 #endif
 }
 
-+ (void)scheduleNodeForDisplay:(ASDisplayNode *)node;
++ (void)scheduleNodeForRecursiveDisplay:(ASDisplayNode *)node;
 
 // The _ASDisplayLayer backing the node, if any.
 @property (nonatomic, readonly, retain) _ASDisplayLayer *asyncLayer;
@@ -125,26 +150,24 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
 - (BOOL)__shouldLoadViewOrLayer;
 - (BOOL)__shouldSize;
 
-// Core implementation of -measureWithSizeRange:. Must be called with _propertyLock held.
-- (ASLayout *)__measureWithSizeRange:(ASSizeRange)constrainedSize;
-
+/**
+ Invoked before a call to setNeedsLayout to the underlying view
+ */
 - (void)__setNeedsLayout;
+
+/**
+ Invoked after a call to setNeedsDisplay to the underlying view
+ */
+- (void)__setNeedsDisplay;
+
 - (void)__layout;
 - (void)__setSupernode:(ASDisplayNode *)supernode;
-
-// Changed before calling willEnterHierarchy / didExitHierarchy.
-@property (nonatomic, readwrite, assign, getter = isInHierarchy) BOOL inHierarchy;
 
 // Private API for helper functions / unit tests.  Use ASDisplayNodeDisableHierarchyNotifications() to control this.
 - (BOOL)__visibilityNotificationsDisabled;
 - (BOOL)__selfOrParentHasVisibilityNotificationsDisabled;
 - (void)__incrementVisibilityNotificationsDisabled;
 - (void)__decrementVisibilityNotificationsDisabled;
-
-// Call willEnterHierarchy if necessary and set inHierarchy = YES if visibility notifications are enabled on all of its parents
-- (void)__enterHierarchy;
-// Call didExitHierarchy if necessary and set inHierarchy = NO if visibility notifications are enabled on all of its parents
-- (void)__exitHierarchy;
 
 // Helper method to summarize whether or not the node run through the display process
 - (BOOL)__implementsDisplay;
@@ -159,6 +182,8 @@ typedef NS_OPTIONS(NSUInteger, ASDisplayNodeMethodOverrides)
 - (id)initWithLayerClass:(Class)layerClass;
 
 @property (nonatomic, assign) CGFloat contentsScaleForDisplay;
+
+- (void)applyPendingViewState;
 
 /**
  * // TODO: NOT YET IMPLEMENTED

@@ -151,8 +151,11 @@
         needsSupernodeRemoval = YES;
       }
     } else {
-      // If supernode is loaded but our superview is nil, the user manually removed us, so disconnect supernode.
-      needsSupernodeRemoval = supernodeLoaded;
+      // If supernode is loaded but our superview is nil, the user likely manually removed us, so disconnect supernode.
+      // The unlikely alternative: we are in __unloadNode, with shouldRasterizeSubnodes just having been turned on.
+      // In the latter case, we don't want to disassemble the node hierarchy because all views are intentionally being destroyed.
+      BOOL nodeIsRasterized = ((_node.hierarchyState & ASHierarchyStateRasterized) == ASHierarchyStateRasterized);
+      needsSupernodeRemoval = (supernodeLoaded && !nodeIsRasterized);
     }
     
     if (needsSupernodeRemoval) {
@@ -328,4 +331,36 @@
   return _node;
 }
 
+#if TARGET_OS_TV
+#pragma mark - tvOS
+- (BOOL)canBecomeFocused
+{
+  return [_node canBecomeFocused];
+}
+
+- (void)didUpdateFocusInContext:(UIFocusUpdateContext *)context withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator
+{
+  return [_node didUpdateFocusInContext:context withAnimationCoordinator:coordinator];
+}
+
+- (void)setNeedsFocusUpdate
+{
+  return [_node setNeedsFocusUpdate];
+}
+
+- (void)updateFocusIfNeeded
+{
+  return [_node updateFocusIfNeeded];
+}
+
+- (BOOL)shouldUpdateFocusInContext:(UIFocusUpdateContext *)context
+{
+  return [_node shouldUpdateFocusInContext:context];
+}
+
+- (UIView *)preferredFocusedView
+{
+  return [_node preferredFocusedView];
+}
+#endif
 @end

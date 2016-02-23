@@ -24,6 +24,9 @@
           selector == @selector(numberOfSectionsInTableView:) ||
           selector == @selector(tableView:numberOfRowsInSection:) ||
           
+          // used for ASCellNode visibility
+          selector == @selector(scrollViewDidScroll:) ||
+          
           // used for ASRangeController visibility updates
           selector == @selector(tableView:willDisplayCell:forRowAtIndexPath:) ||
           selector == @selector(tableView:didEndDisplayingCell:forRowAtIndexPath:) ||
@@ -54,7 +57,16 @@
           selector == @selector(collectionView:didEndDisplayingCell:forItemAtIndexPath:) ||
           
           // used for batch fetching API
-          selector == @selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:)
+          selector == @selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:) ||
+          
+          // used for ASCellNode visibility
+          selector == @selector(scrollViewDidScroll:) ||
+          
+          // intercepted due to not being supported by ASCollectionView (prevent bugs caused by usage)
+          selector == @selector(collectionView:canMoveItemAtIndexPath:) ||
+          selector == @selector(collectionView:moveItemAtIndexPath:toIndexPath:) ||
+          selector == @selector(collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:) ||
+          selector == @selector(collectionView:didEndDisplayingSupplementaryView:forElementOfKind:atIndexPath:)
           );
 }
 
@@ -67,6 +79,7 @@
   return (
           // handled by ASPagerNodeDataSource node<->cell machinery
           selector == @selector(collectionView:nodeForItemAtIndexPath:) ||
+          selector == @selector(collectionView:nodeBlockForItemAtIndexPath:) ||
           selector == @selector(collectionView:numberOfItemsInSection:) ||
           selector == @selector(collectionView:constrainedSizeForNodeAtIndexPath:)
           );
@@ -75,8 +88,8 @@
 @end
 
 @implementation ASDelegateProxy {
-  id <NSObject> __weak _target;
   id <ASDelegateProxyInterceptor> __weak _interceptor;
+  id <NSObject> __weak _target;
 }
 
 - (instancetype)initWithTarget:(id <NSObject>)target interceptor:(id <ASDelegateProxyInterceptor>)interceptor
@@ -97,7 +110,7 @@
 - (BOOL)respondsToSelector:(SEL)aSelector
 {
   if ([self interceptsSelector:aSelector]) {
-    return (_interceptor != nil);
+    return [_interceptor respondsToSelector:aSelector];
   } else {
     // Also return NO if _target has become nil due to zeroing weak reference (or placeholder initialization).
     return [_target respondsToSelector:aSelector];
