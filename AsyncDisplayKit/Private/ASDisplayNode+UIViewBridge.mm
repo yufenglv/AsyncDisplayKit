@@ -18,6 +18,7 @@
 #import "ASEqualityHelpers.h"
 #import "ASPendingStateController.h"
 #import "ASThread.h"
+#import "ASTextNode.h"
 
 /**
  * The following macros are conveniences to help in the common tasks related to the bridging that ASDisplayNode does to UIView and CALayer.
@@ -37,7 +38,7 @@
 
 #define DISPLAYNODE_USE_LOCKS 1
 
-#define __loaded (_layer != nil)
+#define __loaded(node) (node->_view != nil || (node->_layer != nil && node->_flags.layerBacked))
 
 #if DISPLAYNODE_USE_LOCKS
 #define _bridge_prologue_read ASDN::MutexLocker l(_propertyLock); ASDisplayNodeAssertThreadAffinity(self)
@@ -52,36 +53,35 @@
 /// the property cannot be immediately applied and the node does not already have pending changes.
 /// This function must be called with the node's lock already held (after _bridge_prologue_write).
 ASDISPLAYNODE_INLINE BOOL ASDisplayNodeShouldApplyBridgedWriteToView(ASDisplayNode *node) {
+  BOOL loaded = __loaded(node);
   if (ASDisplayNodeThreadIsMain()) {
-    return node.nodeLoaded;
+    return loaded;
   } else {
-    if (node.nodeLoaded && !node->_pendingViewState.hasChanges) {
-      [ASPendingStateController.sharedInstance registerNode:node];
+    if (loaded && !node->_pendingViewState.hasChanges) {
+      [[ASPendingStateController sharedInstance] registerNode:node];
     }
     return NO;
   }
 };
 
-#define _getFromViewOrLayer(layerProperty, viewAndPendingViewStateProperty) __loaded ? \
+#define _getFromViewOrLayer(layerProperty, viewAndPendingViewStateProperty) __loaded(self) ? \
   (_view ? _view.viewAndPendingViewStateProperty : _layer.layerProperty )\
- : self.pendingViewState.viewAndPendingViewStateProperty
+ : ASDisplayNodeGetPendingState(self).viewAndPendingViewStateProperty
 
 #define _setToViewOrLayer(layerProperty, layerValueExpr, viewAndPendingViewStateProperty, viewAndPendingViewStateExpr) BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self); \
-  if (shouldApply) { (_view ? _view.viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr) : _layer.layerProperty = (layerValueExpr)); } else { _pendingViewState.viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr); }
+  if (shouldApply) { (_view ? _view.viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr) : _layer.layerProperty = (layerValueExpr)); } else { ASDisplayNodeGetPendingState(self).viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr); }
 
 #define _setToViewOnly(viewAndPendingViewStateProperty, viewAndPendingViewStateExpr) BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self); \
-if (shouldApply) { _view.viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr); } else { _pendingViewState.viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr); }
+if (shouldApply) { _view.viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr); } else { ASDisplayNodeGetPendingState(self).viewAndPendingViewStateProperty = (viewAndPendingViewStateExpr); }
 
-#define _getFromViewOnly(viewAndPendingViewStateProperty) __loaded ? _view.viewAndPendingViewStateProperty : self.pendingViewState.viewAndPendingViewStateProperty
+#define _getFromViewOnly(viewAndPendingViewStateProperty) __loaded(self) ? _view.viewAndPendingViewStateProperty : ASDisplayNodeGetPendingState(self).viewAndPendingViewStateProperty
 
-#define _getFromLayer(layerProperty) __loaded ? _layer.layerProperty : self.pendingViewState.layerProperty
+#define _getFromLayer(layerProperty) __loaded(self) ? _layer.layerProperty : ASDisplayNodeGetPendingState(self).layerProperty
 
 #define _setToLayer(layerProperty, layerValueExpr) BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self); \
-if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingViewState.layerProperty = (layerValueExpr); }
+if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { ASDisplayNodeGetPendingState(self).layerProperty = (layerValueExpr); }
 
 #define _messageToViewOrLayer(viewAndLayerSelector) (_view ? [_view viewAndLayerSelector] : [_layer viewAndLayerSelector])
-
-#define _messageToLayer(layerSelector) __loaded ? [_layer layerSelector] : [self.pendingViewState layerSelector]
 
 /**
  * This category implements certain frequently-used properties and methods of UIView and CALayer so that ASDisplayNode clients can just call the view/layer methods on the node,
@@ -212,6 +212,7 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
 {
   _bridge_prologue_write;
   _setToViewOrLayer(bounds, newBounds, bounds, newBounds);
+  self.threadSafeBounds = newBounds;
 }
 
 - (CGRect)frame
@@ -235,36 +236,63 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
 - (void)setFrame:(CGRect)rect
 {
   _bridge_prologue_write;
-  BOOL setFrameDirectly = _flags.synchronous && !_flags.layerBacked;
-  BOOL isMainThread = ASDisplayNodeThreadIsMain();
-  BOOL nodeLoaded = self.nodeLoaded;
-  if (nodeLoaded && isMainThread && setFrameDirectly) {
-    // For classes like ASTableNode, ASCollectionNode, ASScrollNode and similar - make sure UIView gets setFrame:
-    
-    // Frame is only defined when transform is identity because we explicitly diverge from CALayer behavior and define frame without transform
-#if DEBUG
-    // Checking if the transform is identity is expensive, so disable when unnecessary. We have assertions on in Release, so DEBUG is the only way I know of.
-    ASDisplayNodeAssert(CATransform3DIsIdentity(self.transform), @"-[ASDisplayNode setFrame:] - self.transform must be identity in order to set the frame property.  (From Apple's UIView documentation: If the transform property is not the identity transform, the value of this property is undefined and therefore should be ignored.)");
-#endif
-    _view.frame = rect;
-  } else if (!nodeLoaded || (isMainThread && !setFrameDirectly)) {
-    /**
-     * Sets a new frame to this node by changing its bounds and position. This method can be safely called even if
-     * the transform is a non-identity transform, because bounds and position can be set instead of frame.
-     * This is NOT called for synchronous nodes (wrapping regular views), which may rely on a [UIView setFrame:] call.
-     * A notable example of the latter is UITableView, which won't resize its internal container if only layer bounds are set.
-     */
-    CGRect bounds;
-    CGPoint position;
-    ASBoundsAndPositionForFrame(rect, self.bounds.origin, self.anchorPoint, &bounds, &position);
 
-    self.bounds = bounds;
-    self.position = position;
-  } else if (nodeLoaded && !isMainThread) {
-    if (!_pendingViewState.hasChanges) {
-      [ASPendingStateController.sharedInstance registerNode:self];
+  // For classes like ASTableNode, ASCollectionNode, ASScrollNode and similar - make sure UIView gets setFrame:
+  struct ASDisplayNodeFlags flags = _flags;
+  BOOL setFrameDirectly = flags.synchronous && !flags.layerBacked;
+
+  BOOL nodeLoaded = __loaded(self);
+  BOOL isMainThread = ASDisplayNodeThreadIsMain();
+  if (!setFrameDirectly) {
+    BOOL canReadProperties = isMainThread || !nodeLoaded;
+    if (canReadProperties) {
+      // We don't have to set frame directly, and we can read current properties.
+      // Compute a new bounds and position and set them on self.
+      CALayer *layer = _layer;
+      BOOL useLayer = (layer != nil);
+      CGPoint origin = (useLayer ? layer.bounds.origin : self.bounds.origin);
+      CGPoint anchorPoint = (useLayer ? layer.anchorPoint : self.anchorPoint);
+
+      CGRect newBounds = CGRectZero;
+      CGPoint newPosition = CGPointZero;
+      ASBoundsAndPositionForFrame(rect, origin, anchorPoint, &newBounds, &newPosition);
+
+      if (useLayer) {
+        layer.bounds = newBounds;
+        layer.position = newPosition;
+      } else {
+        self.bounds = newBounds;
+        self.position = newPosition;
+      }
+    } else {
+      // We don't have to set frame directly, but we can't read properties.
+      // Store the frame in our pending state, and it'll get decomposed into
+      // bounds and position when the pending state is applied.
+      _ASPendingState *pendingState = ASDisplayNodeGetPendingState(self);
+      if (nodeLoaded && !pendingState.hasChanges) {
+        [[ASPendingStateController sharedInstance] registerNode:self];
+      }
+      pendingState.frame = rect;
     }
-    _pendingViewState.frame = rect;
+  } else {
+    if (nodeLoaded && isMainThread) {
+      // We do have to set frame directly, and we're on main thread with a loaded node.
+      // Just set the frame on the view.
+      // NOTE: Frame is only defined when transform is identity because we explicitly diverge from CALayer behavior and define frame without transform.
+#if DEBUG
+      // Checking if the transform is identity is expensive, so disable when unnecessary. We have assertions on in Release, so DEBUG is the only way I know of.
+      ASDisplayNodeAssert(CATransform3DIsIdentity(self.transform), @"-[ASDisplayNode setFrame:] - self.transform must be identity in order to set the frame property.  (From Apple's UIView documentation: If the transform property is not the identity transform, the value of this property is undefined and therefore should be ignored.)");
+#endif
+      _view.frame = rect;
+    } else {
+      // We do have to set frame directly, but either the node isn't loaded or we're on a non-main thread.
+      // Set the frame on the pending state, and it'll call setFrame: when applied.
+      _ASPendingState *pendingState = ASDisplayNodeGetPendingState(self);
+      if (nodeLoaded && !pendingState.hasChanges) {
+        [[ASPendingStateController sharedInstance] registerNode:self];
+      }
+      pendingState.frame = rect;
+    }
   }
 }
 
@@ -274,7 +302,7 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
   if (_hierarchyState & ASHierarchyStateRasterized) {
     ASPerformBlockOnMainThread(^{
       // The below operation must be performed on the main thread to ensure against an extremely rare deadlock, where a parent node
-      // begins materializing the view / layer heirarchy (locking itself or a descendant) while this node walks up
+      // begins materializing the view / layer hierarchy (locking itself or a descendant) while this node walks up
       // the tree and requires locking that node to access .shouldRasterizeDescendants.
       // For this reason, this method should be avoided when possible.  Use _hierarchyState & ASHierarchyStateRasterized.
       ASDisplayNodeAssertMainThread();
@@ -288,39 +316,37 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
       [rasterizedContainerNode setNeedsDisplay];
     });
   } else {
-    if (self.nodeLoaded) {
-      if (ASDisplayNodeThreadIsMain()) {
-        _messageToViewOrLayer(setNeedsDisplay);
-      } else {
-        if (!_pendingViewState.hasChanges) {
-          [ASPendingStateController.sharedInstance registerNode:self];
-        }
-        [self __setNeedsDisplay];
-        [_pendingViewState setNeedsDisplay];
-      }
+    BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self);
+    if (shouldApply) {
+      // If not rasterized, and the node is loaded (meaning we certainly have a view or layer), send a
+      // message to the view/layer first. This is because __setNeedsDisplay calls as scheduleNodeForDisplay,
+      // which may call -displayIfNeeded. We want to ensure the needsDisplay flag is set now, and then cleared.
+      _messageToViewOrLayer(setNeedsDisplay);
     } else {
-      [self __setNeedsDisplay];
+      [ASDisplayNodeGetPendingState(self) setNeedsDisplay];
     }
+    [self __setNeedsDisplay];
   }
 }
 
 - (void)setNeedsLayout
 {
   _bridge_prologue_write;
-  if (self.nodeLoaded) {
-    if (ASDisplayNodeThreadIsMain()) {
-       [self __setNeedsLayout];
-        _messageToViewOrLayer(setNeedsLayout);
-    } else {
-      if (!_pendingViewState.hasChanges) {
-        [ASPendingStateController.sharedInstance registerNode:self];
-      }
-      // NOTE: We will call [self __setNeedsLayout] just before we apply
-      // the pending state. We need to call it on main if the node is loaded
-      // to support implicit hierarchy management.
-      [_pendingViewState setNeedsLayout];
-    }
+  BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self);
+  if (shouldApply) {
+    // The node is loaded and we're on main.
+    // Quite the opposite of setNeedsDisplay, we must call __setNeedsLayout before messaging
+    // the view or layer to ensure that measurement and implicitly added subnodes have been handled.
+    [self __setNeedsLayout];
+    _messageToViewOrLayer(setNeedsLayout);
+  } else if (__loaded(self)) {
+    // The node is loaded but we're not on main.
+    // We will call [self __setNeedsLayout] when we apply
+    // the pending state. We need to call it on main if the node is loaded
+    // to support implicit hierarchy management.
+    [ASDisplayNodeGetPendingState(self) setNeedsLayout];
   } else {
+    // The node is not loaded and we're not on main.
     [self __setNeedsLayout];
   }
 }
@@ -334,10 +360,21 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
 - (void)setOpaque:(BOOL)newOpaque
 {
   _bridge_prologue_write;
-  _setToLayer(opaque, newOpaque);
-  // NOTE: If we're in the background, then when the pending state
-  // is applied to the view on main, we will call `setNeedsDisplay` if
-  // the new opaque value doesn't match the one on the layer.
+  
+  BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self);
+  
+  if (shouldApply) {
+    BOOL oldOpaque = _layer.opaque;
+    _layer.opaque = newOpaque;
+    if (oldOpaque != newOpaque) {
+      [self setNeedsDisplay];
+    }
+  } else {
+    // NOTE: If we're in the background, we cannot read the current value of self.opaque (if loaded).
+    // When the pending state is applied to the view on main, we will call `setNeedsDisplay` if
+    // the new opaque value doesn't match the one on the layer.
+    ASDisplayNodeGetPendingState(self).opaque = newOpaque;
+  }
 }
 
 - (BOOL)isUserInteractionEnabled
@@ -504,28 +541,29 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
 - (UIViewContentMode)contentMode
 {
   _bridge_prologue_read;
-  if (__loaded) {
+  if (__loaded(self)) {
     if (_flags.layerBacked) {
       return ASDisplayNodeUIContentModeFromCAContentsGravity(_layer.contentsGravity);
     } else {
       return _view.contentMode;
     }
   } else {
-    return self.pendingViewState.contentMode;
+    return ASDisplayNodeGetPendingState(self).contentMode;
   }
 }
 
 - (void)setContentMode:(UIViewContentMode)contentMode
 {
   _bridge_prologue_write;
-  if (__loaded) {
+  BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self);
+  if (shouldApply) {
     if (_flags.layerBacked) {
       _layer.contentsGravity = ASDisplayNodeCAContentsGravityFromUIContentMode(contentMode);
     } else {
       _view.contentMode = contentMode;
     }
   } else {
-    self.pendingViewState.contentMode = contentMode;
+    ASDisplayNodeGetPendingState(self).contentMode = contentMode;
   }
 }
 
@@ -538,10 +576,22 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { _pendingVie
 - (void)setBackgroundColor:(UIColor *)newBackgroundColor
 {
   _bridge_prologue_write;
-  _setToLayer(backgroundColor, newBackgroundColor.CGColor);
-  // NOTE: If we're in the background, then when the pending state
-  // is applied to the view on main, we will call `setNeedsDisplay` if
-  // the new background color doesn't match the one on the layer.
+  
+  CGColorRef newBackgroundCGColor = [newBackgroundColor CGColor];
+  BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self);
+  
+  if (shouldApply) {
+    CGColorRef oldBackgroundCGColor = _layer.backgroundColor;
+    _layer.backgroundColor = newBackgroundCGColor;
+    if (!CGColorEqualToColor(oldBackgroundCGColor, newBackgroundCGColor)) {
+      [self setNeedsDisplay];
+    }
+  } else {
+    // NOTE: If we're in the background, we cannot read the current value of bgcolor (if loaded).
+    // When the pending state is applied to the view on main, we will call `setNeedsDisplay` if
+    // the new background color doesn't match the one on the layer.
+    ASDisplayNodeGetPendingState(self).backgroundColor = newBackgroundCGColor;
+  }
 }
 
 - (UIColor *)tintColor

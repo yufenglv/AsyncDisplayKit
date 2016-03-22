@@ -8,10 +8,10 @@
  *
  */
 
-#import <UIKit/UIKit.h>
+#pragma once
 
-#ifndef ComponentKit_ASTextKitAttributes_h
-#define ComponentKit_ASTextKitAttributes_h
+#import <UIKit/UIKit.h>
+#import "ASEqualityHelpers.h"
 
 @protocol ASTextKitTruncating;
 
@@ -21,11 +21,6 @@ extern NSString *const ASTextKitTruncationAttributeName;
  text.
  */
 extern NSString *const ASTextKitEntityAttributeName;
-
-static inline BOOL _objectsEqual(id<NSObject> obj1, id<NSObject> obj2)
-{
-  return obj1 == obj2 ? YES : [obj1 isEqual:obj2];
-}
 
 /**
  All NSObject values in this struct should be copied when passed into the TextComponent.
@@ -87,18 +82,19 @@ struct ASTextKitAttributes {
    */
   NSArray *pointSizeScaleFactors;
   /**
-   The currently applied scale factor. Only valid if pointSizeScaleFactors are provided. Defaults to 0 (no scaling)
+   An optional block that returns a custom layout manager subclass. If nil, defaults to NSLayoutManager.
    */
-  CGFloat currentScaleFactor;
-  /**
-   A pointer to a function that that returns a custom layout manager subclass. If nil, defaults to NSLayoutManager.
-   */
-  NSLayoutManager *(*layoutManagerFactory)(void);
+  NSLayoutManager * (^layoutManagerCreationBlock)(void);
   
   /**
    An optional delegate for the NSLayoutManager
    */
   id<NSLayoutManagerDelegate> layoutManagerDelegate;
+
+  /**
+   An optional block that returns a custom NSTextStorage for the layout manager. 
+   */
+  NSTextStorage * (^textStorageCreationBlock)(NSAttributedString *attributedString);
 
   /**
    We provide an explicit copy function so we can use aggregate initializer syntax while providing copy semantics for
@@ -118,9 +114,9 @@ struct ASTextKitAttributes {
       shadowOpacity,
       shadowRadius,
       pointSizeScaleFactors,
-      currentScaleFactor,
-      layoutManagerFactory,
+      layoutManagerCreationBlock,
       layoutManagerDelegate,
+      textStorageCreationBlock,
     };
   };
 
@@ -132,17 +128,15 @@ struct ASTextKitAttributes {
     && shadowOpacity == other.shadowOpacity
     && shadowRadius == other.shadowRadius
     && [pointSizeScaleFactors isEqualToArray:other.pointSizeScaleFactors]
-    && currentScaleFactor == currentScaleFactor
-    && layoutManagerFactory == other.layoutManagerFactory
+    && layoutManagerCreationBlock == other.layoutManagerCreationBlock
+    && textStorageCreationBlock == other.textStorageCreationBlock
     && CGSizeEqualToSize(shadowOffset, other.shadowOffset)
-    && _objectsEqual(exclusionPaths, other.exclusionPaths)
-    && _objectsEqual(avoidTailTruncationSet, other.avoidTailTruncationSet)
-    && _objectsEqual(shadowColor, other.shadowColor)
-    && _objectsEqual(attributedString, other.attributedString)
-    && _objectsEqual(truncationAttributedString, other.truncationAttributedString);
+    && ASObjectIsEqual(exclusionPaths, other.exclusionPaths)
+    && ASObjectIsEqual(avoidTailTruncationSet, other.avoidTailTruncationSet)
+    && ASObjectIsEqual(shadowColor, other.shadowColor)
+    && ASObjectIsEqual(attributedString, other.attributedString)
+    && ASObjectIsEqual(truncationAttributedString, other.truncationAttributedString);
   }
 
   size_t hash() const;
 };
-
-#endif
