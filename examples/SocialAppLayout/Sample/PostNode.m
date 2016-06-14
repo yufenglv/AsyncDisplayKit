@@ -1,19 +1,27 @@
-/* This file provided by Facebook is for non-commercial testing and evaluation
- * purposes only.  Facebook reserves all rights not expressly granted.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * FACEBOOK BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+//  PostNode.m
+//  Sample
+//
+//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
+//  This source code is licensed under the BSD-style license found in the
+//  LICENSE file in the root directory of this source tree. An additional grant
+//  of patent rights can be found in the PATENTS file in the same directory.
+//
+//  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+//  FACEBOOK BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+//  ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+//  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
 
 #import "PostNode.h"
 #import "Post.h"
 #import "TextStyles.h"
 #import "LikesNode.h"
 #import "CommentsNode.h"
+
+#define PostNodeDividerColor [UIColor lightGrayColor]
 
 @interface PostNode() <ASNetworkImageNodeDelegate, ASTextNodeDelegate>
 
@@ -34,8 +42,10 @@
 
 @implementation PostNode
 
-- (instancetype)initWithPost:(Post *)post {
-    
+#pragma mark - Lifecycle
+
+- (instancetype)initWithPost:(Post *)post
+{
     self = [super init];
     if (self) {
         _post = post;
@@ -89,6 +99,7 @@
             _postNode.userInteractionEnabled = YES;
             _postNode.linkAttributeNames = @[ kLinkAttributeName ];
             _postNode.attributedString = attrString;
+            _postNode.passthroughNonlinkTouches = YES;   // passes touches through when they aren't on a link
             
         }
         
@@ -148,7 +159,7 @@
         
         // Hairline cell separator
         _divider = [[ASDisplayNode alloc] init];
-        _divider.backgroundColor = [UIColor lightGrayColor];
+        [self updateDividerColor];
         [self addSubnode:_divider];
         
         // Via
@@ -172,6 +183,20 @@
     return self;
 }
 
+- (void)updateDividerColor
+{
+    /*
+     * UITableViewCell traverses through all its descendant views and adjusts their background color accordingly
+     * either to [UIColor clearColor], although potentially it could use the same color as the selection highlight itself.
+     * After selection, the same trick is performed again in reverse, putting all the backgrounds back as they used to be.
+     * But in our case, we don't want to have the background color disappearing so we reset it after highlighting or
+     * selection is done.
+     */
+    _divider.backgroundColor = PostNodeDividerColor;
+}
+
+#pragma mark - ASDisplayNode
+
 - (void)didLoad
 {
     // enable highlighting now that self.layer has loaded -- see ASHighlightOverlayLayer.h
@@ -180,14 +205,19 @@
     [super didLoad];
 }
 
-- (ASLayoutSpec *)layoutSpecThatFits:(ASSizeRange)constrainedSize {
-    
+- (ASLayoutSpec *)layoutSpecThatFits:(ASSizeRange)constrainedSize
+{
     // Flexible spacer between username and time
     ASLayoutSpec *spacer = [[ASLayoutSpec alloc] init];
     spacer.flexGrow = YES;
-    
+  
+    // NOTE: This inset is not actually required by the layout, but is an example of the upward propogation of layoutable
+    // properties.  Specifically, .flexGrow from the child is transferred to the inset spec so they can expand together.
+    // Without this capability, it would be required to set insetSpacer.flexGrow = YES;
+    ASInsetLayoutSpec *insetSpacer = [ASInsetLayoutSpec insetLayoutSpecWithInsets:UIEdgeInsetsMake(0, 0, 0, 0) child:spacer];
+  
     // Horizontal stack for name, username, via icon and time
-    NSMutableArray *layoutSpecChildren = [@[_nameNode, _usernameNode, spacer] mutableCopy];
+    NSMutableArray *layoutSpecChildren = [@[_nameNode, _usernameNode, insetSpacer] mutableCopy];
     if (_post.via != 0) {
         [layoutSpecChildren addObject:_viaNode];
     }
@@ -239,7 +269,23 @@
     _divider.frame = CGRectMake(0.0f, 0.0f, self.calculatedSize.width, pixelHeight);
 }
 
-#pragma mark - ASTextNodeDelegate methods.
+#pragma mark - ASCellNode
+
+- (void)setHighlighted:(BOOL)highlighted
+{
+    [super setHighlighted:highlighted];
+    
+    [self updateDividerColor];
+}
+
+- (void)setSelected:(BOOL)selected
+{
+    [super setSelected:selected];
+    
+    [self updateDividerColor];
+}
+
+#pragma mark - <ASTextNodeDelegate>
 
 - (BOOL)textNode:(ASTextNode *)richTextNode shouldHighlightLinkAttribute:(NSString *)attribute value:(id)value atPoint:(CGPoint)point
 {

@@ -1,10 +1,12 @@
-/* Copyright (c) 2014-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- */
+//
+//  _ASAsyncTransaction.mm
+//  AsyncDisplayKit
+//
+//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
+//  This source code is licensed under the BSD-style license found in the
+//  LICENSE file in the root directory of this source tree. An additional grant
+//  of patent rights can be found in the PATENTS file in the same directory.
+//
 
 #import "_ASAsyncTransaction.h"
 #import "_ASAsyncTransactionGroup.h"
@@ -16,14 +18,14 @@
 NSInteger const ASDefaultTransactionPriority = 0;
 
 @interface ASDisplayNodeAsyncTransactionOperation : NSObject
-- (id)initWithOperationCompletionBlock:(asyncdisplaykit_async_transaction_operation_completion_block_t)operationCompletionBlock;
+- (instancetype)initWithOperationCompletionBlock:(asyncdisplaykit_async_transaction_operation_completion_block_t)operationCompletionBlock;
 @property (nonatomic, copy) asyncdisplaykit_async_transaction_operation_completion_block_t operationCompletionBlock;
 @property (atomic, strong) id<NSObject> value; // set on bg queue by the operation block
 @end
 
 @implementation ASDisplayNodeAsyncTransactionOperation
 
-- (id)initWithOperationCompletionBlock:(asyncdisplaykit_async_transaction_operation_completion_block_t)operationCompletionBlock
+- (instancetype)initWithOperationCompletionBlock:(asyncdisplaykit_async_transaction_operation_completion_block_t)operationCompletionBlock
 {
   if ((self = [super init])) {
     _operationCompletionBlock = [operationCompletionBlock copy];
@@ -315,8 +317,8 @@ ASAsyncTransactionQueue & ASAsyncTransactionQueue::instance()
 #pragma mark -
 #pragma mark Lifecycle
 
-- (id)initWithCallbackQueue:(dispatch_queue_t)callbackQueue
-            completionBlock:(void(^)(_ASAsyncTransaction *, BOOL))completionBlock
+- (instancetype)initWithCallbackQueue:(dispatch_queue_t)callbackQueue
+                      completionBlock:(void(^)(_ASAsyncTransaction *, BOOL))completionBlock
 {
   if ((self = [self init])) {
     if (callbackQueue == NULL) {

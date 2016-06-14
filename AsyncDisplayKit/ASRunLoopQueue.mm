@@ -1,9 +1,13 @@
 //
-//  ASRunLoopQueue.m
+//  ASRunLoopQueue.mm
 //  AsyncDisplayKit
 //
 //  Created by Rahul Malik on 3/7/16.
-//  Copyright © 2016 Facebook. All rights reserved.
+//
+//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
+//  This source code is licensed under the BSD-style license found in the
+//  LICENSE file in the root directory of this source tree. An additional grant
+//  of patent rights can be found in the PATENTS file in the same directory.
 //
 
 #import "ASRunLoopQueue.h"
@@ -130,6 +134,7 @@ static void runLoopSourceCallback(void *info) {
   // If the queue is not fully drained yet force another run loop to process next batch of items
   if (!isQueueDrained) {
     CFRunLoopSourceSignal(_runLoopSource);
+    CFRunLoopWakeUp(_runLoop);
    }
 }
 

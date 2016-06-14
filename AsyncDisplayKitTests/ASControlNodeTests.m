@@ -1,10 +1,12 @@
-/* Copyright (c) 2014-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- */
+//
+//  ASControlNodeTests.m
+//  AsyncDisplayKit
+//
+//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
+//  This source code is licensed under the BSD-style license found in the
+//  LICENSE file in the root directory of this source tree. An additional grant
+//  of patent rights can be found in the PATENTS file in the same directory.
+//
 
 #import <AsyncDisplayKit/ASControlNode.h>
 
@@ -104,6 +106,76 @@
   [controller.view addSubview:node.view];
   [node sendActionsForControlEvents:EVENT withEvent:nil];
   XCTAssert(controller.hits == 1, @"Controller did not receive the action event");
+}
+
+- (void)testRemoveWithoutTargetRemovesTargetlessAction {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:nil action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node removeTarget:nil action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 0, @"Controller did not receive exactly zero action events");
+}
+
+- (void)testRemoveWithTarget {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node removeTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 0, @"Controller did not receive exactly zero action events");
+}
+
+- (void)testRemoveWithTargetRemovesAction {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node removeTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 0, @"Controller did not receive exactly zero action events");
+}
+
+- (void)testRemoveWithoutTargetRemovesTargetedAction {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node removeTarget:nil action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 0, @"Controller did not receive exactly zero action events");
+}
+
+- (void)testDuplicateEntriesWithoutTarget {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:nil action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node addTarget:nil action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 1, @"Controller did not receive exactly one action event");
+}
+
+- (void)testDuplicateEntriesWithTarget {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node addTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 1, @"Controller did not receive exactly one action event");
+}
+
+- (void)testDuplicateEntriesWithAndWithoutTarget {
+  ASActionSenderEventController *controller = [[ASActionSenderEventController alloc] init];
+  ASControlNode *node = [[ASControlNode alloc] init];
+  [node addTarget:controller action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [node addTarget:nil action:ACTION_SENDER_EVENT forControlEvents:EVENT];
+  [controller.view addSubview:node.view];
+  [node sendActionsForControlEvents:EVENT withEvent:nil];
+  XCTAssertEqual(controller.hits, 2, @"Controller did not receive exactly two action events");
 }
 
 - (void)testDeeperHierarchyWithoutTarget {

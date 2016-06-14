@@ -1,10 +1,12 @@
-/* Copyright (c) 2014-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- */
+//
+//  ASCollectionView.h
+//  AsyncDisplayKit
+//
+//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
+//  This source code is licensed under the BSD-style license found in the
+//  LICENSE file in the root directory of this source tree. An additional grant
+//  of patent rights can be found in the PATENTS file in the same directory.
+//
 
 #import <UIKit/UIKit.h>
 
@@ -163,6 +165,12 @@ NS_ASSUME_NONNULL_BEGIN
  * while all the cells load.
  */
 - (void)reloadDataImmediately;
+
+/**
+ * Triggers a relayout of all nodes.
+ *
+ */
+- (void)relayoutItems;
 
 /**
  *  Blocks execution of the main thread until all section and row updates are committed. This method must be called from the main thread.
@@ -342,7 +350,7 @@ NS_ASSUME_NONNULL_BEGIN
  * This is a node-based UICollectionViewDataSource.
  */
 #define ASCollectionViewDataSource ASCollectionDataSource
-@protocol ASCollectionDataSource <ASCommonCollectionViewDataSource, NSObject>
+@protocol ASCollectionDataSource <ASCommonCollectionViewDataSource>
 
 @optional
 

@@ -1,10 +1,12 @@
-/* Copyright (c) 2014-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- */
+//
+//  ASDisplayNodeTests.m
+//  AsyncDisplayKit
+//
+//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
+//  This source code is licensed under the BSD-style license found in the
+//  LICENSE file in the root directory of this source tree. An additional grant
+//  of patent rights can be found in the PATENTS file in the same directory.
+//
 
 #import <QuartzCore/QuartzCore.h>
 
@@ -75,7 +77,6 @@ for (ASDisplayNode *n in @[ nodes ]) {\
 
 
 @interface ASDisplayNode (HackForTests)
-+ (dispatch_queue_t)asyncSizingQueue;
 - (id)initWithViewClass:(Class)viewClass;
 - (id)initWithLayerClass:(Class)layerClass;
 
@@ -87,6 +88,12 @@ for (ASDisplayNode *n in @[ nodes ]) {\
 @property (atomic, copy) void (^willDeallocBlock)(ASTestDisplayNode *node);
 @property (atomic, copy) CGSize(^calculateSizeBlock)(ASTestDisplayNode *node, CGSize size);
 @property (atomic) BOOL hasFetchedData;
+
+@property (atomic) BOOL displayRangeStateChangedToYES;
+@property (atomic) BOOL displayRangeStateChangedToNO;
+
+@property (atomic) BOOL loadStateChangedToYES;
+@property (atomic) BOOL loadStateChangedToNO;
 @end
 
 @interface ASTestResponderNode : ASTestDisplayNode
@@ -109,6 +116,28 @@ for (ASDisplayNode *n in @[ nodes ]) {\
 {
   [super clearFetchedData];
   self.hasFetchedData = NO;
+}
+
+- (void)displayStateDidChange:(BOOL)inDisplayState
+{
+  [super displayStateDidChange:inDisplayState];
+  
+  if (inDisplayState) {
+    self.displayRangeStateChangedToYES = YES;
+  } else {
+    self.displayRangeStateChangedToNO = YES;
+  }
+}
+
+- (void)loadStateDidChange:(BOOL)inLoadState
+{
+  [super loadStateDidChange:inLoadState];
+  
+  if (inLoadState) {
+    self.loadStateChangedToYES = YES;
+  } else {
+    self.loadStateChangedToNO = YES;
+  }
 }
 
 - (void)dealloc
@@ -308,6 +337,17 @@ for (ASDisplayNode *n in @[ nodes ]) {\
   XCTAssertEqual(YES, node.displaysAsynchronously, @"default displaysAsynchronously broken %@", hasLoadedView);
   XCTAssertEqual(NO, node.asyncdisplaykit_asyncTransactionContainer, @"default asyncdisplaykit_asyncTransactionContainer broken %@", hasLoadedView);
   XCTAssertEqualObjects(nil, node.name, @"default name broken %@", hasLoadedView);
+  
+  XCTAssertEqual(NO, node.isAccessibilityElement, @"default isAccessibilityElement is broken %@", hasLoadedView);
+  XCTAssertEqual((id)nil, node.accessibilityLabel, @"default accessibilityLabel is broken %@", hasLoadedView);
+  XCTAssertEqual((id)nil, node.accessibilityHint, @"default accessibilityHint is broken %@", hasLoadedView);
+  XCTAssertEqual((id)nil, node.accessibilityValue, @"default accessibilityValue is broken %@", hasLoadedView);
+  XCTAssertEqual(UIAccessibilityTraitNone, node.accessibilityTraits, @"default accessibilityTraits is broken %@", hasLoadedView);
+  XCTAssertTrue(CGRectEqualToRect(CGRectZero, node.accessibilityFrame), @"default accessibilityFrame is broken %@", hasLoadedView);
+  XCTAssertEqual((id)nil, node.accessibilityLanguage, @"default accessibilityLanguage is broken %@", hasLoadedView);
+  XCTAssertEqual(NO, node.accessibilityElementsHidden, @"default accessibilityElementsHidden is broken %@", hasLoadedView);
+  XCTAssertEqual(NO, node.accessibilityViewIsModal, @"default accessibilityViewIsModal is broken %@", hasLoadedView);
+  XCTAssertEqual(NO, node.shouldGroupAccessibilityChildren, @"default shouldGroupAccessibilityChildren is broken %@", hasLoadedView);
 
   if (!isLayerBacked) {
     XCTAssertEqual(YES, node.userInteractionEnabled, @"default userInteractionEnabled broken %@", hasLoadedView);
@@ -317,19 +357,6 @@ for (ASDisplayNode *n in @[ nodes ]) {\
   } else {
     XCTAssertEqual(NO, node.userInteractionEnabled, @"layer-backed nodes do not support userInteractionEnabled %@", hasLoadedView);
     XCTAssertEqual(NO, node.exclusiveTouch, @"layer-backed nodes do not support exclusiveTouch %@", hasLoadedView);
-  }
-
-  if (!isLayerBacked) {
-    XCTAssertEqual(NO, node.isAccessibilityElement, @"default isAccessibilityElement is broken %@", hasLoadedView);
-    XCTAssertEqual((id)nil, node.accessibilityLabel, @"default accessibilityLabel is broken %@", hasLoadedView);
-    XCTAssertEqual((id)nil, node.accessibilityHint, @"default accessibilityHint is broken %@", hasLoadedView);
-    XCTAssertEqual((id)nil, node.accessibilityValue, @"default accessibilityValue is broken %@", hasLoadedView);
-    XCTAssertEqual(UIAccessibilityTraitNone, node.accessibilityTraits, @"default accessibilityTraits is broken %@", hasLoadedView);
-    XCTAssertTrue(CGRectEqualToRect(CGRectZero, node.accessibilityFrame), @"default accessibilityFrame is broken %@", hasLoadedView);
-    XCTAssertEqual((id)nil, node.accessibilityLanguage, @"default accessibilityLanguage is broken %@", hasLoadedView);
-    XCTAssertEqual(NO, node.accessibilityElementsHidden, @"default accessibilityElementsHidden is broken %@", hasLoadedView);
-    XCTAssertEqual(NO, node.accessibilityViewIsModal, @"default accessibilityViewIsModal is broken %@", hasLoadedView);
-    XCTAssertEqual(NO, node.shouldGroupAccessibilityChildren, @"default shouldGroupAccessibilityChildren is broken %@", hasLoadedView);
   }
 }
 
@@ -406,20 +433,25 @@ for (ASDisplayNode *n in @[ nodes ]) {\
   XCTAssertEqual(NO, node.userInteractionEnabled, @"userInteractionEnabled broken %@", hasLoadedView);
   XCTAssertEqual((BOOL)!isLayerBacked, node.exclusiveTouch, @"exclusiveTouch broken %@", hasLoadedView);
   XCTAssertEqualObjects(@"quack like a duck", node.name, @"name broken %@", hasLoadedView);
+  
+  XCTAssertEqual(YES, node.isAccessibilityElement, @"accessibilityElement broken %@", hasLoadedView);
+  XCTAssertEqualObjects(@"Ship love", node.accessibilityLabel, @"accessibilityLabel broken %@", hasLoadedView);
+  XCTAssertEqualObjects(@"Awesome things will happen", node.accessibilityHint, @"accessibilityHint broken %@", hasLoadedView);
+  XCTAssertEqualObjects(@"1 of 2", node.accessibilityValue, @"accessibilityValue broken %@", hasLoadedView);
+  XCTAssertEqual(UIAccessibilityTraitSelected | UIAccessibilityTraitButton, node.accessibilityTraits, @"accessibilityTraits broken %@", hasLoadedView);
+  XCTAssertTrue(CGRectEqualToRect(CGRectMake(1, 2, 3, 4), node.accessibilityFrame), @"accessibilityFrame broken %@", hasLoadedView);
+  XCTAssertEqualObjects(@"mas", node.accessibilityLanguage, @"accessibilityLanguage broken %@", hasLoadedView);
+  XCTAssertEqual(YES, node.accessibilityElementsHidden, @"accessibilityElementsHidden broken %@", hasLoadedView);
+  XCTAssertEqual(YES, node.accessibilityViewIsModal, @"accessibilityViewIsModal broken %@", hasLoadedView);
+  XCTAssertEqual(YES, node.shouldGroupAccessibilityChildren, @"shouldGroupAccessibilityChildren broken %@", hasLoadedView);
+  XCTAssertEqual(UIAccessibilityNavigationStyleSeparate, node.accessibilityNavigationStyle, @"accessibilityNavigationStyle broken %@", hasLoadedView);
+  XCTAssertTrue(CGPointEqualToPoint(CGPointMake(1.0, 1.0), node.accessibilityActivationPoint), @"accessibilityActivationPoint broken %@", hasLoadedView);
+  XCTAssertNotNil(node.accessibilityPath, @"accessibilityPath broken %@", hasLoadedView);
+  
 
   if (!isLayerBacked) {
     XCTAssertEqual(UIViewAutoresizingFlexibleLeftMargin, node.autoresizingMask, @"autoresizingMask %@", hasLoadedView);
     XCTAssertEqual(NO, node.autoresizesSubviews, @"autoresizesSubviews broken %@", hasLoadedView);
-    XCTAssertEqual(YES, node.isAccessibilityElement, @"accessibilityElement broken %@", hasLoadedView);
-    XCTAssertEqualObjects(@"Ship love", node.accessibilityLabel, @"accessibilityLabel broken %@", hasLoadedView);
-    XCTAssertEqualObjects(@"Awesome things will happen", node.accessibilityHint, @"accessibilityHint broken %@", hasLoadedView);
-    XCTAssertEqualObjects(@"1 of 2", node.accessibilityValue, @"accessibilityValue broken %@", hasLoadedView);
-    XCTAssertEqual(UIAccessibilityTraitSelected | UIAccessibilityTraitButton, node.accessibilityTraits, @"accessibilityTraits broken %@", hasLoadedView);
-    XCTAssertTrue(CGRectEqualToRect(CGRectMake(1, 2, 3, 4), node.accessibilityFrame), @"accessibilityFrame broken %@", hasLoadedView);
-    XCTAssertEqualObjects(@"mas", node.accessibilityLanguage, @"accessibilityLanguage broken %@", hasLoadedView);
-    XCTAssertEqual(YES, node.accessibilityElementsHidden, @"accessibilityElementsHidden broken %@", hasLoadedView);
-    XCTAssertEqual(YES, node.accessibilityViewIsModal, @"accessibilityViewIsModal broken %@", hasLoadedView);
-    XCTAssertEqual(YES, node.shouldGroupAccessibilityChildren, @"shouldGroupAccessibilityChildren broken %@", hasLoadedView);
   }
 }
 
@@ -458,21 +490,25 @@ for (ASDisplayNode *n in @[ nodes ]) {\
     node.asyncdisplaykit_asyncTransactionContainer = YES;
     node.userInteractionEnabled = NO;
     node.name = @"quack like a duck";
+    
+    node.isAccessibilityElement = YES;
+    node.accessibilityLabel = @"Ship love";
+    node.accessibilityHint = @"Awesome things will happen";
+    node.accessibilityValue = @"1 of 2";
+    node.accessibilityTraits = UIAccessibilityTraitSelected | UIAccessibilityTraitButton;
+    node.accessibilityFrame = CGRectMake(1, 2, 3, 4);
+    node.accessibilityLanguage = @"mas";
+    node.accessibilityElementsHidden = YES;
+    node.accessibilityViewIsModal = YES;
+    node.shouldGroupAccessibilityChildren = YES;
+    node.accessibilityNavigationStyle = UIAccessibilityNavigationStyleSeparate;
+    node.accessibilityActivationPoint = CGPointMake(1.0, 1.0);
+    node.accessibilityPath = [UIBezierPath bezierPath];
 
     if (!isLayerBacked) {
       node.exclusiveTouch = YES;
       node.autoresizesSubviews = NO;
       node.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-      node.isAccessibilityElement = YES;
-      node.accessibilityLabel = @"Ship love";
-      node.accessibilityHint = @"Awesome things will happen";
-      node.accessibilityValue = @"1 of 2";
-      node.accessibilityTraits = UIAccessibilityTraitSelected | UIAccessibilityTraitButton;
-      node.accessibilityFrame = CGRectMake(1, 2, 3, 4);
-      node.accessibilityLanguage = @"mas";
-      node.accessibilityElementsHidden = YES;
-      node.accessibilityViewIsModal = YES;
-      node.shouldGroupAccessibilityChildren = YES;
     }
   }];
 
@@ -1870,6 +1906,44 @@ static bool stringContainsPointer(NSString *description, const void *p) {
   XCTAssert(node.bounds.origin.y == 2, @"Wrong ASDisplayNode.bounds.origin.y");
   XCTAssert(node.bounds.size.width == 7, @"Wrong ASDisplayNode.bounds.size.width");
   XCTAssert(node.bounds.size.height == 8, @"Wrong ASDisplayNode.bounds.size.height");
+}
+
+- (void)testDidEnterDisplayIsCalledWhenNodesEnterDisplayRange
+{
+  ASTestDisplayNode *node = [[ASTestDisplayNode alloc] init];
+
+  [node recursivelySetInterfaceState:ASInterfaceStateDisplay];
+  
+  XCTAssert([node displayRangeStateChangedToYES]);
+}
+
+- (void)testDidExitDisplayIsCalledWhenNodesExitDisplayRange
+{
+  ASTestDisplayNode *node = [[ASTestDisplayNode alloc] init];
+  
+  [node recursivelySetInterfaceState:ASInterfaceStateDisplay];
+  [node recursivelySetInterfaceState:ASInterfaceStateFetchData];
+  
+  XCTAssert([node displayRangeStateChangedToNO]);
+}
+
+- (void)testDidEnterFetchDataIsCalledWhenNodesEnterFetchDataRange
+{
+  ASTestDisplayNode *node = [[ASTestDisplayNode alloc] init];
+  
+  [node recursivelySetInterfaceState:ASInterfaceStateFetchData];
+  
+  XCTAssert([node loadStateChangedToYES]);
+}
+
+- (void)testDidExitFetchDataIsCalledWhenNodesExitFetchDataRange
+{
+  ASTestDisplayNode *node = [[ASTestDisplayNode alloc] init];
+  
+  [node recursivelySetInterfaceState:ASInterfaceStateFetchData];
+  [node recursivelySetInterfaceState:ASInterfaceStateDisplay];
+
+  XCTAssert([node loadStateChangedToNO]);
 }
 
 @end
