@@ -12,15 +12,39 @@
 
 #import "ASLayoutTransition.h"
 
-#import "ASDisplayNode.h"
 #import "ASDisplayNodeInternal.h"
-#import "ASDisplayNode+Subclasses.h"
 #import "ASLayout.h"
 
-#import <vector>
+#import <queue>
 
 #import "NSArray+Diffing.h"
 #import "ASEqualityHelpers.h"
+
+/**
+ * Search the whole layout stack if at least one layout has a layoutable object that can not be layed out asynchronous.
+ * This can be the case for example if a node was already loaded
+ */
+static inline BOOL ASLayoutCanTransitionAsynchronous(ASLayout *layout) {
+  // Queue used to keep track of sublayouts while traversing this layout in a BFS fashion.
+  std::queue<ASLayout *> queue;
+  queue.push(layout);
+  
+  while (!queue.empty()) {
+    layout = queue.front();
+    queue.pop();
+    
+    if (layout.layoutableObject.canLayoutAsynchronous == NO) {
+      return NO;
+    }
+    
+    // Add all sublayouts to process in next step
+    for (int i = 0; i < layout.sublayouts.count; i++) {
+      queue.push(layout.sublayouts[0]);
+    }
+  }
+  
+  return YES;
+}
 
 @implementation ASLayoutTransition {
   ASDN::RecursiveMutex _propertyLock;
@@ -44,13 +68,28 @@
   return self;
 }
 
+- (BOOL)isSynchronous
+{
+  ASDN::MutexLocker l(_propertyLock);
+  return ASLayoutCanTransitionAsynchronous(_pendingLayout);
+}
+
+- (void)startTransition
+{
+  [self applySubnodeInsertions];
+  [self applySubnodeRemovals];
+}
+
 - (void)applySubnodeInsertions
 {
   ASDN::MutexLocker l(_propertyLock);
   [self calculateSubnodeOperationsIfNeeded];
-  for (NSUInteger i = 0; i < [_insertedSubnodes count]; i++) {
+  
+  NSUInteger i = 0;
+  for (ASDisplayNode *node in _insertedSubnodes) {
     NSUInteger p = _insertedSubnodePositions[i];
-    [_node insertSubnode:_insertedSubnodes[i] atIndex:p];
+    [_node insertSubnode:node atIndex:p];
+    i += 1;
   }
 }
 
@@ -58,8 +97,8 @@
 {
   ASDN::MutexLocker l(_propertyLock);
   [self calculateSubnodeOperationsIfNeeded];
-  for (NSUInteger i = 0; i < [_removedSubnodes count]; i++) {
-    [_removedSubnodes[i] removeFromSupernode];
+  for (ASDisplayNode *subnode in _removedSubnodes) {
+    [subnode removeFromSupernode];
   }
 }
 

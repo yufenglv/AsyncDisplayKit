@@ -11,10 +11,10 @@
 #import "ASBackgroundLayoutSpec.h"
 
 #import "ASAssert.h"
-#import "ASBaseDefines.h"
 #import "ASLayout.h"
 
-static NSString * const kBackgroundChildKey = @"kBackgroundChildKey";
+static NSUInteger const kForegroundChildIndex = 0;
+static NSUInteger const kBackgroundChildIndex = 1;
 
 @interface ASBackgroundLayoutSpec ()
 @end
@@ -28,7 +28,7 @@ static NSString * const kBackgroundChildKey = @"kBackgroundChildKey";
   }
   
   ASDisplayNodeAssertNotNil(child, @"Child cannot be nil");
-  [self setChild:child];
+  [self setChild:child forIndex:kForegroundChildIndex];
   self.background = background;
   return self;
 }
@@ -63,12 +63,12 @@ static NSString * const kBackgroundChildKey = @"kBackgroundChildKey";
 
 - (void)setBackground:(id<ASLayoutable>)background
 {
-  [super setChild:background forIdentifier:kBackgroundChildKey];
+  [super setChild:background forIndex:kBackgroundChildIndex];
 }
 
 - (id<ASLayoutable>)background
 {
-  return [super childForIdentifier:kBackgroundChildKey];
+  return [super childForIndex:kBackgroundChildIndex];
 }
 
 @end

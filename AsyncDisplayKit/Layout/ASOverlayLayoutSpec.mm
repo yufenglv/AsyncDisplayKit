@@ -11,10 +11,10 @@
 #import "ASOverlayLayoutSpec.h"
 
 #import "ASAssert.h"
-#import "ASBaseDefines.h"
 #import "ASLayout.h"
 
-static NSString * const kOverlayChildKey = @"kOverlayChildKey";
+static NSUInteger const kUnderlayChildIndex = 0;
+static NSUInteger const kOverlayChildIndex = 1;
 
 @implementation ASOverlayLayoutSpec
 
@@ -25,7 +25,7 @@ static NSString * const kOverlayChildKey = @"kOverlayChildKey";
   }
   ASDisplayNodeAssertNotNil(child, @"Child that will be overlayed on shouldn't be nil");
   self.overlay = overlay;
-  [self setChild:child];
+  [self setChild:child forIndex:kUnderlayChildIndex];
   return self;
 }
 
@@ -36,12 +36,12 @@ static NSString * const kOverlayChildKey = @"kOverlayChildKey";
 
 - (void)setOverlay:(id<ASLayoutable>)overlay
 {
-  [super setChild:overlay forIdentifier:kOverlayChildKey];
+  [super setChild:overlay forIndex:kOverlayChildIndex];
 }
 
 - (id<ASLayoutable>)overlay
 {
-  return [super childForIdentifier:kOverlayChildKey];
+  return [super childForIndex:kOverlayChildIndex];
 }
 
 /**

@@ -10,11 +10,9 @@
 
 #import "ASInternalHelpers.h"
 
-#import <functional>
 #import <objc/runtime.h>
 
 #import "ASThread.h"
-#import "ASLayout.h"
 
 BOOL ASSubclassOverridesSelector(Class superclass, Class subclass, SEL selector)
 {
@@ -52,6 +50,17 @@ void ASPerformBlockOnBackgroundThread(void (^block)())
   }
 }
 
+void ASPerformBlockOnDeallocationQueue(void (^block)())
+{
+  static dispatch_queue_t queue;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    queue = dispatch_queue_create("org.AsyncDisplayKit.deallocationQueue", DISPATCH_QUEUE_SERIAL);
+  });
+  
+  dispatch_async(queue, block);
+}
+
 CGFloat ASScreenScale()
 {
   static CGFloat __scale = 0.0;
@@ -76,16 +85,6 @@ CGFloat ASCeilPixelValue(CGFloat f)
 CGFloat ASRoundPixelValue(CGFloat f)
 {
   return roundf(f * ASScreenScale()) / ASScreenScale();
-}
-
-BOOL ASRunningOnOS7()
-{
-  static BOOL isOS7 = NO;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    isOS7 = ([[UIDevice currentDevice].systemVersion floatValue] < 8.0);
-  });
-  return isOS7;
 }
 
 @implementation NSIndexPath (ASInverseComparison)
